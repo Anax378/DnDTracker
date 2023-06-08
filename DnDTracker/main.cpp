@@ -1,5 +1,6 @@
-#include <iostream>;
+#include <iostream>
 #include "scene.h"
+#include <chrono>
 
 int main(int argc, char* argv[]){
 	std::cout << "hello world!" << std::endl;
@@ -8,21 +9,40 @@ int main(int argc, char* argv[]){
 		std::cout << "failed to init sdl video" << std::endl;
 		return 1;
 	}
-	Scene scene = Scene(Scene::readDefaultImage(), Window(500, 500, "TEST"), Camera(Coord(0, 0), 100, 100, 50, 50));
 
+	
+	Scene scene = Scene(Scene::readDefaultImage(), Window(500, 500, "TEST"), Camera(CoordInt(0, 0), 500, 500, 500, 500));
 	int res = 0;
-	res = scene.w.init();
+	res = scene.init();
 	if(res != 0){
 		return res;
 	}
+	
 	SDL_Event event;
+
+	int fpsc = 0;
+
+	std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
 
 	while(!scene.w.shouldQuit()){
 		while(SDL_PollEvent(&event)){
 			scene.handleEvent(event);
-			scene.render();
 		}
+		scene.updateGUI();
+		scene.render();
+
+		if(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()-ms.count() > 1000){
+			ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+			std::cout << "fps: " << fpsc << std::endl;
+			fpsc = 0;
+		}
+		fpsc++;
 	}
+
+	SDL_DestroyWindow(scene.w.window);
+	SDL_Quit();
+
+	
 
 	
 

@@ -190,6 +190,9 @@ struct Scene{
 					&(mouseLeftDownPosition.x),
 					&(mouseLeftDownPosition.y));
 				mouseLeftDownCameraPosition = camera.position;
+				SDL_GetMouseState(
+					&(mousePosition.x),
+					&(mousePosition.y));
 			}
 		}
 		if(event.type == SDL_MOUSEBUTTONUP){

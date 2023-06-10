@@ -279,14 +279,12 @@ struct Scene{
 	}
 
 	void changeCameraResolution(int width, int height){
-		float xcenter = (float)camera.width/2.0f;
-		float ycenter = (float)camera.height/2.0f;
+		int xmovement = std::round((float)(width-camera.width)/2.0f);
+		int ymovement = std::round((float)(height-camera.height)/2.0f);
 		camera.width = width;
 		camera.height = height;
-		float newxcenter = (float)camera.width/2.0f;
-		float newycenter = (float)camera.height/2.0f;
-
-		camera.position = camera.position.add(CoordInt(newxcenter-xcenter, newycenter-ycenter));
+		camera.position.x -= xmovement;
+		camera.position.y -= ymovement; 
 	}
 
 	void clipCamera(){

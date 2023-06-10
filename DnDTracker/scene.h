@@ -28,6 +28,10 @@ struct CoordInt{
 		this->x = x;
 		this->y = y;
 	}
+
+	CoordInt add(CoordInt other){
+		return CoordInt(x+other.x, y+other.y);
+	}
 };
 
 struct Window{
@@ -56,7 +60,7 @@ struct Window{
 			SDL_WINDOWPOS_UNDEFINED,
 			width,
 			height,
-			SDL_WINDOW_SHOWN
+			SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
 		);
 
 		if(window == NULL){
@@ -94,29 +98,37 @@ struct Camera{
 	}
 
 	float getXScaleFactor(){
-		return renderWidth/width;
+		return (float)renderWidth/(float)width;
 	}
 	float getYScaleFactor(){
-		return renderHeight/height;
+		return (float)renderHeight/(float)height;
 	}
+
 
 	CoordInt toCameraCoordinates(CoordInt coord){
 		float Xfactor = getXScaleFactor();
 		float Yfactor = getYScaleFactor();
-		return CoordInt(std::round((coord.x-position.x)*Xfactor),std::round((coord.y-position.y)*Yfactor));
+		return CoordInt(std::round(((float)coord.x-position.x)*Xfactor),std::round(((float)coord.y-position.y)*Yfactor));
 	}
 
-	CoordInt fromWindowCoordinates(CoordInt coord)
+	CoordInt fromCameraCoordinates(CoordInt coord)
 	{
 		float Xfactor = getXScaleFactor();
 		float Yfactor = getYScaleFactor();
-		return CoordInt(std::round((coord.x/Xfactor) + position.x), std::round((coord.y/Yfactor) + position.y));
+		return CoordInt(std::round(((float)coord.x/Xfactor) + position.x), std::round(((float)coord.y/Yfactor) + position.y));
 	}
 
+	CoordInt scaleToCameraCoordinates(CoordInt coord){
+		float Xfactor = getXScaleFactor();
+		float Yfactor = getYScaleFactor();
+		return CoordInt(std::round(((float)coord.x)*Xfactor),std::round(((float)coord.y)*Yfactor));
+	}
 
-	CoordInt fromCameraCordinates(CoordInt coord){
-		return CoordInt(coord.x+position.x, coord.y+position.y);
-
+	CoordInt scaleFromCameraCoordinates(CoordInt coord)
+	{
+		float Xfactor = getXScaleFactor();
+		float Yfactor = getYScaleFactor();
+		return CoordInt(std::round(((float)coord.x/Xfactor)), std::round(((float)coord.y/Yfactor)));
 	}
 
 	cv::Mat getBackgroundImage(cv::Mat image){
@@ -129,6 +141,8 @@ struct Camera{
 };
 
 struct Scene{
+	float zoomSpeed = -0.1f;
+
 	Window w;
 	Camera camera;
 	cv::Mat backgroundImage;
@@ -136,7 +150,17 @@ struct Scene{
 	CoordInt mouseLeftDownPosition = CoordInt(0, 0);
 	CoordInt mouseLeftDownCameraPosition = CoordInt(0, 0);
 
+	int toScroll = 0;
+	int originalCameraWidth;
+	int originalCameraHeight;
+
+	int baseZoomCameraWidth;
+	int baseZoomCameraHeight;
+
 	bool isMouseLeftDown = false;
+	bool changedWindowSize = false;
+
+	float zoomFactor = 1.0f;
 
 	SDL_Texture* texture;
 	
@@ -145,6 +169,11 @@ struct Scene{
 		this->backgroundImage = image;
 		this->w = w;
 		this->camera = camera;
+		this->originalCameraWidth = camera.width;
+		this->originalCameraHeight = camera.height;
+
+		this->baseZoomCameraWidth = camera.width;
+		this->baseZoomCameraHeight = camera.height;
 	}
 
 	static cv::Mat generateNoiseImage(int width, int height) {
@@ -178,9 +207,27 @@ struct Scene{
 		return res;
 	}
 
+	void alignCameraAspectRatio(){
+		float factor = std::sqrt(((float)originalCameraWidth*(float)originalCameraHeight)/((float)camera.renderWidth*(float)camera.renderHeight));
+		baseZoomCameraWidth = std::round((float)camera.renderWidth*factor);
+		baseZoomCameraHeight = std::round((float)camera.renderHeight*factor);
+		
+	}
+
 	void handleEvent(SDL_Event event){
 		if(event.type == SDL_QUIT){
 			w.quit = true;
+		}
+
+		if(event.type == SDL_WINDOWEVENT){
+			if(event.window.event == SDL_WINDOWEVENT_RESIZED){
+				changeOutputResolution(event.window.data1, event.window.data2);
+				changedWindowSize = true;
+			}
+		}
+
+		if(event.type == SDL_MOUSEWHEEL){
+			toScroll += event.wheel.y;
 		}
 
 		if(event.type == SDL_MOUSEBUTTONDOWN){
@@ -203,11 +250,17 @@ struct Scene{
 				SDL_GetMouseState(
 					&(mousePosition.x),
 					&(mousePosition.y));
-//				std::cout << "x: " << mousePosition.x << " y: " << mousePosition.y << std::endl;
 				
 			}
 		}
 
+	}
+
+	float getMaxZoomFactor(){
+		return std::min(
+			(float)backgroundImage.cols/(float)baseZoomCameraWidth,
+			(float)backgroundImage.rows/(float)baseZoomCameraHeight
+		);
 	}
 
 	void renderBackground(SDL_Renderer* renderer){
@@ -217,21 +270,23 @@ struct Scene{
 
 	}
 
-	void zoom(float factor){
+	void zoomToFactor(float factor){
 		changeCameraResolution(
-			std::round((float)camera.width*factor),
-			std::round((float)camera.height*factor)
+			std::round((float)baseZoomCameraWidth*factor),
+			std::round((float)baseZoomCameraHeight*factor)
 		);
 
 	}
 
 	void changeCameraResolution(int width, int height){
-		int widthChange = width-camera.width;
-		int heightChange = height-camera.height;
+		float xcenter = (float)camera.width/2.0f;
+		float ycenter = (float)camera.height/2.0f;
 		camera.width = width;
 		camera.height = height;
-		camera.position.x += std::round((float)widthChange/2.0f);
-		camera.position.y += std::round((float)heightChange/2.0f);
+		float newxcenter = (float)camera.width/2.0f;
+		float newycenter = (float)camera.height/2.0f;
+
+		camera.position = camera.position.add(CoordInt(newxcenter-xcenter, newycenter-ycenter));
 	}
 
 	void clipCamera(){
@@ -257,15 +312,30 @@ struct Scene{
 	void changeOutputResolution(int width, int height){
 		camera.renderWidth = width;
 		camera.renderHeight = height;
-		delete texture;
+		SDL_DestroyTexture(texture);
 		texture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STATIC, camera.renderWidth, camera.renderHeight);
 	}
 
 	void updateGUI(){
-		if(isMouseLeftDown){
 
-			camera.position.x = mouseLeftDownCameraPosition.x - (camera.toCameraCoordinates( mousePosition).x-camera.toCameraCoordinates(mouseLeftDownPosition).x);
-			camera.position.y = mouseLeftDownCameraPosition.y - (camera.toCameraCoordinates( mousePosition).y-camera.toCameraCoordinates(mouseLeftDownPosition).y);
+		if(changedWindowSize){
+			alignCameraAspectRatio();
+			changedWindowSize = false;
+		}
+		
+
+		zoomFactor += ((float)toScroll)*zoomSpeed*zoomFactor;
+		if(zoomFactor <= 0.01){
+			zoomFactor = 0.01;
+		}
+		if(zoomFactor > getMaxZoomFactor()){
+			zoomFactor = getMaxZoomFactor();
+		}
+		zoomToFactor(zoomFactor);
+		toScroll = 0;
+		if(isMouseLeftDown){
+			camera.position.x = mouseLeftDownCameraPosition.x - (camera.scaleFromCameraCoordinates(mousePosition).x-camera.scaleFromCameraCoordinates(mouseLeftDownPosition).x);
+			camera.position.y = mouseLeftDownCameraPosition.y - (camera.scaleFromCameraCoordinates(mousePosition).y-camera.scaleFromCameraCoordinates(mouseLeftDownPosition).y);
 		}
 		clipCamera();
 	}

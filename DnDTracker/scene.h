@@ -7,8 +7,9 @@
 #include <filesystem>
 #include "opencv2/opencv.hpp"
 
-#define DEFAULT_MAP_FILE_NAME "default_map.png"
+#define DEFAULT_MAP_FILE_NAME "Assets\\default_map.png"
 #define LOG(x) std::cout << x << std::endl;
+#define ICON_RES 50
 
 struct Coord{
 	float x;
@@ -80,6 +81,18 @@ struct Window{
 	bool shouldQuit(){return quit;}
 };
 
+struct Color{
+	unsigned char r;
+	unsigned char g;
+	unsigned char b;
+	Color(): r(), g(), b() {};
+	Color(unsigned char r, unsigned char g, unsigned char b){
+		this->r = r;
+		this->g = g;
+		this->b = b;
+	}
+};
+
 struct Camera{
 	CoordInt position;
 	int width;
@@ -140,6 +153,89 @@ struct Camera{
 
 };
 
+struct GuiToggleComponent{
+	CoordInt position;
+
+	Color color;
+	Color hoveringColor;
+	Color selectedColor;
+	cv::Mat* image;
+	bool isToggled = false;
+
+	GuiToggleComponent(): position(), color(), hoveringColor(), selectedColor(), image() {}
+	GuiToggleComponent(CoordInt position, Color color, Color hoveringColor, Color selectedColor, cv::Mat* image){
+		this->position = position;
+		this->color = color;
+		this->hoveringColor = hoveringColor;
+		this->selectedColor = selectedColor;
+		this->image = image;
+	}
+
+	bool isInside(CoordInt pos){
+		if(pos.x < position.x){return false;}
+		if(pos.y < position.y){return false;}
+		if(pos.x > position.x+ICON_RES){return false;}
+		if(pos.y > position.y+ICON_RES){return false;}
+		return true;
+	}
+
+	void render(SDL_Renderer* renderer, SDL_Texture* texture, bool isHovering){
+		SDL_UpdateTexture(texture, NULL, (*image).data,(*image).cols * (*image).channels());
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+		SDL_Rect rect = {position.x, position.y, ICON_RES, ICON_RES};
+		if(isHovering){
+			SDL_SetTextureColorMod(texture, hoveringColor.r, hoveringColor.g, hoveringColor.b);
+		}
+		else if(isToggled){
+			SDL_SetTextureColorMod(texture, selectedColor.r, selectedColor.g, selectedColor.b);
+		}
+		else{
+			SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
+		}
+		SDL_RenderCopy(renderer, texture, NULL, &rect);
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
+	}
+	void toggle(){
+		isToggled = !isToggled;
+	}
+
+};
+
+struct Marker{
+	CoordInt position;
+	Color color;
+	Color labelColor;
+	std::string label;
+	cv::Mat* icon;
+
+	Marker(): position(), color(), labelColor(), icon(), label() {};
+	Marker(CoordInt position, Color color, Color labelColor, std::string label, cv::Mat* icon){
+		this->position = position;
+		this->color = color;
+		this->labelColor = labelColor;
+		this->label = label;
+		this->icon = icon;
+	}
+
+	bool isVisible(Camera* camera){
+		return true;
+
+		//TODO: do not render unseen markers;
+	}
+
+	void render(SDL_Renderer* renderer, SDL_Texture* texture, Camera* camera){
+		SDL_UpdateTexture(texture, NULL, (*icon).data, (*icon).cols * (*icon).channels());
+		CoordInt renderPos = (*camera).toCameraCoordinates(position);
+		SDL_Rect rect = {renderPos.x, renderPos.y, ICON_RES, ICON_RES};
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+		SDL_RenderCopy(renderer, texture, NULL, &rect);
+	}
+
+};
+
+
 struct Scene{
 	float zoomSpeed = -0.1f;
 
@@ -160,9 +256,17 @@ struct Scene{
 	bool isMouseLeftDown = false;
 	bool changedWindowSize = false;
 
+	bool isUnhandledMouseClick = false;
+
 	float zoomFactor = 1.0f;
 
+	GuiToggleComponent markerToggle;
+
 	SDL_Texture* texture;
+	SDL_Texture* iconTexture;
+
+	std::vector<cv::Mat> icons = {};
+	std::vector<Marker> markers = {};
 	
 	Scene(): backgroundImage(), w(), camera() {};
 	Scene(cv::Mat image, Window w, Camera camera){
@@ -202,9 +306,22 @@ struct Scene{
 	}
 
 	int init(){
+		loadIcons();
 		int res = w.init();
 		texture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STATIC, camera.renderWidth, camera.renderHeight);
+		iconTexture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, ICON_RES, ICON_RES);
+
+		markerToggle = GuiToggleComponent(CoordInt(0, 0), Color(0, 255, 0), Color(255, 255, 255), Color(255, 0, 0), &(icons.at(1)));
 		return res;
+	}
+
+	void loadIcons(){
+		icons.push_back(cv::imread("Assets\\Icon1.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::imread("Assets\\marker_toggle.png", cv::IMREAD_UNCHANGED));
+	}
+
+	void addMarker(Marker marker){
+		markers.push_back(marker);
 	}
 
 	void alignCameraAspectRatio(){
@@ -233,6 +350,7 @@ struct Scene{
 		if(event.type == SDL_MOUSEBUTTONDOWN){
 			if(event.button.button == SDL_BUTTON_LEFT){
 				isMouseLeftDown = true;
+				isUnhandledMouseClick = true;
 				SDL_GetMouseState(
 					&(mouseLeftDownPosition.x),
 					&(mouseLeftDownPosition.y));
@@ -245,14 +363,13 @@ struct Scene{
 		if(event.type == SDL_MOUSEBUTTONUP){
 			if(event.button.button == SDL_BUTTON_LEFT){isMouseLeftDown = false;}
 		}
-		if(isMouseLeftDown){
-			if(event.type == SDL_MOUSEMOTION){
-				SDL_GetMouseState(
-					&(mousePosition.x),
-					&(mousePosition.y));
+		if(event.type == SDL_MOUSEMOTION){
+			SDL_GetMouseState(
+				&(mousePosition.x),
+				&(mousePosition.y));
 				
-			}
 		}
+		
 
 	}
 
@@ -262,12 +379,19 @@ struct Scene{
 			(float)backgroundImage.rows/(float)baseZoomCameraHeight
 		);
 	}
-
 	void renderBackground(SDL_Renderer* renderer){
 		cv::Mat image = camera.getBackgroundImage(backgroundImage);
 		SDL_UpdateTexture(texture, NULL, image.data, image.cols*3);
 		SDL_RenderCopy(renderer, texture, NULL, NULL);
 
+	}
+
+	void renderMarkers(SDL_Renderer* renderer){
+		for(int i = 0; i < markers.size(); i++){
+			if(markers.at(i).isVisible(&camera)){
+				markers.at(i).render(renderer, iconTexture, &camera);
+			}
+		}
 	}
 
 	void zoomToFactor(float factor){
@@ -284,7 +408,7 @@ struct Scene{
 		camera.width = width;
 		camera.height = height;
 		camera.position.x -= xmovement;
-		camera.position.y -= ymovement; 
+		camera.position.y -= ymovement;
 	}
 
 	void clipCamera(){
@@ -304,6 +428,8 @@ struct Scene{
 
 	void render(){
 		renderBackground(w.renderer);
+		renderMarkers(w.renderer);
+		markerToggle.render(w.renderer, iconTexture, markerToggle.isInside(mousePosition));
 		SDL_RenderPresent(w.renderer);
 	}
 
@@ -331,9 +457,17 @@ struct Scene{
 		}
 		zoomToFactor(zoomFactor);
 		toScroll = 0;
+
+		if(isUnhandledMouseClick && markerToggle.isInside(mousePosition)){
+			markerToggle.toggle();
+			isUnhandledMouseClick = false;
+			isMouseLeftDown = false;
+		}
+
 		if(isMouseLeftDown){
 			camera.position.x = mouseLeftDownCameraPosition.x - (camera.scaleFromCameraCoordinates(mousePosition).x-camera.scaleFromCameraCoordinates(mouseLeftDownPosition).x);
 			camera.position.y = mouseLeftDownCameraPosition.y - (camera.scaleFromCameraCoordinates(mousePosition).y-camera.scaleFromCameraCoordinates(mouseLeftDownPosition).y);
+			isUnhandledMouseClick = false;
 		}
 		clipCamera();
 	}

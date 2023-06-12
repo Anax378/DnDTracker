@@ -208,14 +208,16 @@ struct Marker{
 	Color labelColor;
 	std::string label;
 	cv::Mat* icon;
+	int hitbox_size;
 
 	Marker(): position(), color(), labelColor(), icon(), label() {};
-	Marker(CoordInt position, Color color, Color labelColor, std::string label, cv::Mat* icon){
+	Marker(CoordInt position, Color color, Color labelColor, std::string label, cv::Mat* icon, int hitbox_size){
 		this->position = position;
 		this->color = color;
 		this->labelColor = labelColor;
 		this->label = label;
 		this->icon = icon;
+		this->hitbox_size = hitbox_size;
 	}
 
 	bool isVisible(Camera* camera){
@@ -224,10 +226,19 @@ struct Marker{
 		//TODO: do not render unseen markers;
 	}
 
+	bool isInside(CoordInt pos, Camera* camera){
+		CoordInt screenPos = camera->toCameraCoordinates(position);
+		if(screenPos.x < pos.x - hitbox_size){return false;}
+		if(screenPos.y < pos.y - hitbox_size){return false;}
+		if(screenPos.x > pos.x + hitbox_size){return false;}
+		if(screenPos.y > pos.y + hitbox_size){return false;}
+		return true;
+	}
+
 	void render(SDL_Renderer* renderer, SDL_Texture* texture, Camera* camera){
 		SDL_UpdateTexture(texture, NULL, (*icon).data, (*icon).cols * (*icon).channels());
 		CoordInt renderPos = (*camera).toCameraCoordinates(position);
-		SDL_Rect rect = {renderPos.x, renderPos.y, ICON_RES, ICON_RES};
+		SDL_Rect rect = {renderPos.x - (ICON_RES/2), renderPos.y-(ICON_RES/2), ICON_RES, ICON_RES};
 		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
 		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 		SDL_RenderCopy(renderer, texture, NULL, &rect);
@@ -257,6 +268,8 @@ struct Scene{
 	bool changedWindowSize = false;
 
 	bool isUnhandledMouseClick = false;
+	bool isMarkerSelected = false;
+	Marker* selectedMarker;
 
 	float zoomFactor = 1.0f;
 
@@ -349,6 +362,7 @@ struct Scene{
 
 		if(event.type == SDL_MOUSEBUTTONDOWN){
 			if(event.button.button == SDL_BUTTON_LEFT){
+
 				isMouseLeftDown = true;
 				isUnhandledMouseClick = true;
 				SDL_GetMouseState(
@@ -358,16 +372,36 @@ struct Scene{
 				SDL_GetMouseState(
 					&(mousePosition.x),
 					&(mousePosition.y));
+				for(int i = 0; i < markers.size(); i++){
+					if(markers.at(i).isInside(mousePosition, &camera)){
+						isMarkerSelected = true;
+						selectedMarker = &(markers.at(i));
+						break;
+					}
+				}
+				
 			}
 		}
 		if(event.type == SDL_MOUSEBUTTONUP){
 			if(event.button.button == SDL_BUTTON_LEFT){isMouseLeftDown = false;}
+			isMarkerSelected = false;
 		}
 		if(event.type == SDL_MOUSEMOTION){
 			SDL_GetMouseState(
 				&(mousePosition.x),
 				&(mousePosition.y));
 				
+		}
+		if(event.type == SDL_KEYDOWN){
+			if(event.key.keysym.sym == SDLK_DELETE){
+				if(!isMarkerSelected){
+					for(int i = 0; i < markers.size(); i++){
+						if(markers.at(i).isInside(mousePosition, &camera)){
+							markers.erase(markers.begin()+i);
+						}
+					}
+				}
+			}
 		}
 		
 
@@ -464,7 +498,19 @@ struct Scene{
 			isMouseLeftDown = false;
 		}
 
-		if(isMouseLeftDown){
+		if(markerToggle.isToggled && isUnhandledMouseClick){
+			markers.push_back(Marker(camera.fromCameraCoordinates(mousePosition), Color(255, 255, 255), Color(0, 0, 0), std::string("new Marker"), &(icons.at(0)), 25));
+			isMouseLeftDown = false;
+			isUnhandledMouseClick = false;
+			markerToggle.toggle();
+		}
+		
+		if(isMarkerSelected){
+			(*selectedMarker).position = camera.fromCameraCoordinates(mousePosition);
+			isUnhandledMouseClick = false;
+		}
+
+		if(isMouseLeftDown && !isMarkerSelected){
 			camera.position.x = mouseLeftDownCameraPosition.x - (camera.scaleFromCameraCoordinates(mousePosition).x-camera.scaleFromCameraCoordinates(mouseLeftDownPosition).x);
 			camera.position.y = mouseLeftDownCameraPosition.y - (camera.scaleFromCameraCoordinates(mousePosition).y-camera.scaleFromCameraCoordinates(mouseLeftDownPosition).y);
 			isUnhandledMouseClick = false;

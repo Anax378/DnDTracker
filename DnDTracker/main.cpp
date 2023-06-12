@@ -17,7 +17,6 @@ int main(int argc, char* argv[]){
 	if(res != 0){
 		return res;
 	}
-	scene.addMarker(Marker(CoordInt(250, 250), Color(255, 0, 0), Color(0, 0, 255), "Marker", &(scene.icons.at(0))));
 	
 	SDL_Event event;
 

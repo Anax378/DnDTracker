@@ -207,16 +207,16 @@ struct Marker{
 	Color color;
 	Color labelColor;
 	std::string label;
-	cv::Mat* icon;
+	int iconIndex;
 	int hitbox_size;
 
-	Marker(): position(), color(), labelColor(), icon(), label() {};
-	Marker(CoordInt position, Color color, Color labelColor, std::string label, cv::Mat* icon, int hitbox_size){
+	Marker(): position(), color(), labelColor(), iconIndex(), label() {};
+	Marker(CoordInt position, Color color, Color labelColor, std::string label, int iconIndex, int hitbox_size){
 		this->position = position;
 		this->color = color;
 		this->labelColor = labelColor;
 		this->label = label;
-		this->icon = icon;
+		this->iconIndex = iconIndex;
 		this->hitbox_size = hitbox_size;
 	}
 
@@ -235,13 +235,93 @@ struct Marker{
 		return true;
 	}
 
-	void render(SDL_Renderer* renderer, SDL_Texture* texture, Camera* camera){
+	void render(SDL_Renderer* renderer, SDL_Texture* texture, Camera* camera, cv::Mat* icon){
 		SDL_UpdateTexture(texture, NULL, (*icon).data, (*icon).cols * (*icon).channels());
 		CoordInt renderPos = (*camera).toCameraCoordinates(position);
 		SDL_Rect rect = {renderPos.x - (ICON_RES/2), renderPos.y-(ICON_RES/2), ICON_RES, ICON_RES};
 		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);	
+		SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
 		SDL_RenderCopy(renderer, texture, NULL, &rect);
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
+	}
+
+};
+
+struct GuiScrollComponent{
+	CoordInt position;
+	int maxScroll;
+	int scrollIndex;
+
+	GuiScrollComponent(): position(), maxScroll(), scrollIndex() {}
+	GuiScrollComponent(CoordInt position, int maxScroll){
+		this->position = position;
+		this->maxScroll = maxScroll;
+		scrollIndex = 0;
+	}
+
+	void scroll(int toScroll){
+		scrollIndex += toScroll;
+		scrollIndex = scrollIndex % maxScroll;
+		if(scrollIndex < 0){
+			scrollIndex = scrollIndex+maxScroll;
+		}
+	}
+
+	bool isInside(CoordInt pos){
+		if(pos.x < position.x){return false;}
+		if(pos.y < position.y){return false;}
+		if(pos.x > position.x+ICON_RES){return false;}
+		if(pos.y > position.y+ICON_RES){return false;}
+		return true;
+	}
+
+	void render(SDL_Renderer* renderer, SDL_Texture* texture, cv::Mat* image, Color color = Color(255, 255, 255)){
+		SDL_UpdateTexture(texture, NULL, (*image).data,  (*image).cols * (*image).channels());
+		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		SDL_Rect rect = {position.x, position.y, ICON_RES, ICON_RES};
+		SDL_SetTextureColorMod(texture, color.r, color.g,color.b);
+		SDL_RenderCopy(renderer, texture, NULL, &rect);
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
+	}
+
+};
+
+struct GuiColorScrollComponent{
+	CoordInt position;
+	int maxScroll;
+	int scrollIndex;
+
+	GuiColorScrollComponent(): position(), maxScroll(), scrollIndex() {}
+	GuiColorScrollComponent(CoordInt position, int maxScroll){
+		this->position = position;
+		this->maxScroll = maxScroll;
+		scrollIndex = 0;
+	}
+
+	void scroll(int toScroll){
+		scrollIndex += toScroll;
+		if(scrollIndex >= maxScroll){scrollIndex = maxScroll-1;}
+		if(scrollIndex < 0){scrollIndex = 0;}
+	}
+
+	bool isInside(CoordInt pos){
+		if(pos.x < position.x){return false;}
+		if(pos.y < position.y){return false;}
+		if(pos.x > position.x+ICON_RES){return false;}
+		if(pos.y > position.y+ICON_RES){return false;}
+		return true;
+	}
+
+	void render(SDL_Renderer* renderer, SDL_Texture* texture, cv::Mat* image, Color color = Color(255, 255, 255)){
+		SDL_UpdateTexture(texture, NULL, (*image).data,  (*image).cols * (*image).channels());
+		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		SDL_Rect rect = {position.x, position.y, ICON_RES, ICON_RES};
+		SDL_SetTextureColorMod(texture, color.r, color.g,color.b);
+		SDL_RenderCopy(renderer, texture, NULL, &rect);
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
 	}
 
 };
@@ -269,17 +349,31 @@ struct Scene{
 
 	bool isUnhandledMouseClick = false;
 	bool isMarkerSelected = false;
+
+	bool isShiftDown = false;
+
 	Marker* selectedMarker;
 
 	float zoomFactor = 1.0f;
 
-	GuiToggleComponent markerToggle;
+	GuiScrollComponent uppermostIconScroll;
+	GuiScrollComponent upperIconScroll;
+	GuiScrollComponent primaryIconScroll;
+	GuiScrollComponent lowerIconScroll;
+	GuiScrollComponent lowestIconScroll;
+
+	GuiColorScrollComponent ColorRedScroll;
+	GuiColorScrollComponent ColorGreenScroll;
+	GuiColorScrollComponent ColorBlueScroll;
+
+	GuiScrollComponent colorDisplayScroll;
 
 	SDL_Texture* texture;
 	SDL_Texture* iconTexture;
 
 	std::vector<cv::Mat> icons = {};
 	std::vector<Marker> markers = {};
+	std::vector<cv::Mat*> marker_icons = {};
 	
 	Scene(): backgroundImage(), w(), camera() {};
 	Scene(cv::Mat image, Window w, Camera camera){
@@ -291,6 +385,28 @@ struct Scene{
 
 		this->baseZoomCameraWidth = camera.width;
 		this->baseZoomCameraHeight = camera.height;
+	}
+
+	void updateIconScrollComponents(){
+		uppermostIconScroll.scrollIndex = primaryIconScroll.scrollIndex;
+		upperIconScroll.scrollIndex = primaryIconScroll.scrollIndex;
+		lowerIconScroll.scrollIndex = primaryIconScroll.scrollIndex;
+		lowestIconScroll.scrollIndex = primaryIconScroll.scrollIndex;
+
+		uppermostIconScroll.scroll(2);
+		upperIconScroll.scroll(1);
+		lowerIconScroll.scroll(-1);
+		lowestIconScroll.scroll(-2);
+	}
+
+	void renderIconScrollComponents(SDL_Renderer* renderer){
+		Color color = Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex);
+		uppermostIconScroll.render(renderer, iconTexture, marker_icons.at(uppermostIconScroll.scrollIndex), color);
+		upperIconScroll.render(renderer, iconTexture, marker_icons.at(upperIconScroll.scrollIndex), color);
+		primaryIconScroll.render(renderer, iconTexture, marker_icons.at(primaryIconScroll.scrollIndex), color);
+		lowerIconScroll.render(renderer, iconTexture, marker_icons.at(lowerIconScroll.scrollIndex), color);
+		lowestIconScroll.render(renderer, iconTexture, marker_icons.at(lowestIconScroll.scrollIndex), color);
+
 	}
 
 	static cv::Mat generateNoiseImage(int width, int height) {
@@ -324,13 +440,40 @@ struct Scene{
 		texture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STATIC, camera.renderWidth, camera.renderHeight);
 		iconTexture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, ICON_RES, ICON_RES);
 
-		markerToggle = GuiToggleComponent(CoordInt(0, 0), Color(0, 255, 0), Color(255, 255, 255), Color(255, 0, 0), &(icons.at(1)));
+		uppermostIconScroll = GuiScrollComponent(CoordInt(0, 0), marker_icons.size());
+		upperIconScroll = GuiScrollComponent(CoordInt(0, 50), marker_icons.size());
+
+		primaryIconScroll = GuiScrollComponent(CoordInt(0, 100), marker_icons.size());
+
+		lowerIconScroll = GuiScrollComponent(CoordInt(0, 150), marker_icons.size());
+		lowestIconScroll = GuiScrollComponent(CoordInt(0, 200), marker_icons.size());
+
+		ColorRedScroll = GuiColorScrollComponent(CoordInt(50, 0), 256);
+		ColorGreenScroll = GuiColorScrollComponent(CoordInt(100, 0), 256);
+		ColorBlueScroll = GuiColorScrollComponent(CoordInt(150, 0), 256);
+
+		ColorRedScroll.scroll(255);
+		ColorGreenScroll.scroll(255);
+		ColorBlueScroll.scroll(255);
+
+		colorDisplayScroll = GuiScrollComponent(CoordInt(200, 0), 1);
+
+
+		updateIconScrollComponents();
+
 		return res;
 	}
 
 	void loadIcons(){
-		icons.push_back(cv::imread("Assets\\Icon1.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::imread("Assets\\icon1.png", cv::IMREAD_UNCHANGED));
 		icons.push_back(cv::imread("Assets\\marker_toggle.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::imread("Assets\\icon2.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::imread("Assets\\WHITE.png", cv::IMREAD_UNCHANGED));
+		
+
+		marker_icons.push_back( &(icons.at(0)) );
+		marker_icons.push_back( &(icons.at(2)) );
+
 	}
 
 	void addMarker(Marker marker){
@@ -341,7 +484,6 @@ struct Scene{
 		float factor = std::sqrt(((float)originalCameraWidth*(float)originalCameraHeight)/((float)camera.renderWidth*(float)camera.renderHeight));
 		baseZoomCameraWidth = std::round((float)camera.renderWidth*factor);
 		baseZoomCameraHeight = std::round((float)camera.renderHeight*factor);
-		
 	}
 
 	void handleEvent(SDL_Event event){
@@ -357,7 +499,7 @@ struct Scene{
 		}
 
 		if(event.type == SDL_MOUSEWHEEL){
-			toScroll += event.wheel.y;
+			toScroll += event.wheel.y;			
 		}
 
 		if(event.type == SDL_MOUSEBUTTONDOWN){
@@ -402,6 +544,10 @@ struct Scene{
 					}
 				}
 			}
+			if(event.key.keysym.sym == SDLK_LSHIFT){isShiftDown = true;}
+		}
+		if(event.type == SDL_KEYUP){
+			if(event.key.keysym.sym == SDLK_LSHIFT){isShiftDown = false;}
 		}
 		
 
@@ -423,9 +569,23 @@ struct Scene{
 	void renderMarkers(SDL_Renderer* renderer){
 		for(int i = 0; i < markers.size(); i++){
 			if(markers.at(i).isVisible(&camera)){
-				markers.at(i).render(renderer, iconTexture, &camera);
+				cv::Mat* pt;
+				if(markers.at(i).iconIndex >= marker_icons.size()){
+					pt = marker_icons.at(0);
+				}else{
+					pt = marker_icons.at(markers.at(i).iconIndex);
+				}
+				markers.at(i).render(renderer, iconTexture, &camera, pt);
 			}
 		}
+	}
+
+	bool isInsideIconScrolls(CoordInt pos){
+		if(pos.x < uppermostIconScroll.position.x){return false;}
+		if(pos.y < uppermostIconScroll.position.y){return false;}
+		if(pos.x > lowestIconScroll.position.x + ICON_RES){return false;}
+		if(pos.y > lowestIconScroll.position.y + ICON_RES){return false;}
+		return true;
 	}
 
 	void zoomToFactor(float factor){
@@ -463,7 +623,13 @@ struct Scene{
 	void render(){
 		renderBackground(w.renderer);
 		renderMarkers(w.renderer);
-		markerToggle.render(w.renderer, iconTexture, markerToggle.isInside(mousePosition));
+		renderIconScrollComponents(w.renderer);
+		ColorRedScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(ColorRedScroll.scrollIndex, 0, 0));
+		ColorGreenScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(0, ColorGreenScroll.scrollIndex, 0));
+		ColorBlueScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(0, 0, ColorBlueScroll.scrollIndex));
+
+		colorDisplayScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex));
+
 		SDL_RenderPresent(w.renderer);
 	}
 
@@ -475,12 +641,31 @@ struct Scene{
 	}
 
 	void updateGUI(){
-
 		if(changedWindowSize){
 			alignCameraAspectRatio();
 			changedWindowSize = false;
 		}
 		
+		if(toScroll != 0 && isInsideIconScrolls(mousePosition)){
+			primaryIconScroll.scroll(toScroll);
+			updateIconScrollComponents();
+			toScroll = 0;
+		}
+
+		if(toScroll != 0 && ColorRedScroll.isInside(mousePosition)){
+			ColorRedScroll.scroll(toScroll * (isShiftDown ? 1 : 20));
+			toScroll = 0;
+		}
+
+		if(toScroll != 0 && ColorGreenScroll.isInside(mousePosition)){
+			ColorGreenScroll.scroll(toScroll * (isShiftDown ? 1 : 20));
+			toScroll = 0;
+		}
+
+		if(toScroll != 0 && ColorBlueScroll.isInside(mousePosition)){
+			ColorBlueScroll.scroll(toScroll * (isShiftDown ? 1 : 20));
+			toScroll = 0;
+		}
 
 		zoomFactor += ((float)toScroll)*zoomSpeed*zoomFactor;
 		if(zoomFactor <= 0.01){
@@ -492,18 +677,20 @@ struct Scene{
 		zoomToFactor(zoomFactor);
 		toScroll = 0;
 
-		if(isUnhandledMouseClick && markerToggle.isInside(mousePosition)){
-			markerToggle.toggle();
-			isUnhandledMouseClick = false;
-			isMouseLeftDown = false;
+		if(isUnhandledMouseClick && !isMarkerSelected){
+			GuiScrollComponent* pt = NULL;
+			if(uppermostIconScroll.isInside(mousePosition)){pt = &uppermostIconScroll;}
+			if(upperIconScroll.isInside(mousePosition)){pt = &upperIconScroll;}
+			if(primaryIconScroll.isInside(mousePosition)){pt = &primaryIconScroll;}
+			if(lowerIconScroll.isInside(mousePosition)){pt = &lowerIconScroll;}
+			if(lowestIconScroll.isInside(mousePosition)){pt = &lowestIconScroll;}
+			if(pt != NULL){
+				addMarker(Marker(mousePosition, Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex), Color(0, 0, 0), "new Marker", (*pt).scrollIndex, 25));
+				selectedMarker = &(markers.at(markers.size() - 1));
+				isMarkerSelected = true;
+			}
 		}
 
-		if(markerToggle.isToggled && isUnhandledMouseClick){
-			markers.push_back(Marker(camera.fromCameraCoordinates(mousePosition), Color(255, 255, 255), Color(0, 0, 0), std::string("new Marker"), &(icons.at(0)), 25));
-			isMouseLeftDown = false;
-			isUnhandledMouseClick = false;
-			markerToggle.toggle();
-		}
 		
 		if(isMarkerSelected){
 			(*selectedMarker).position = camera.fromCameraCoordinates(mousePosition);
@@ -516,5 +703,5 @@ struct Scene{
 			isUnhandledMouseClick = false;
 		}
 		clipCamera();
-	}
+		}
 };

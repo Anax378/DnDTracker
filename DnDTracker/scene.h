@@ -220,13 +220,13 @@ struct MenuOption{
 		this->name = name;
 		this->textColor = textColor;
 		this->backgroundColor = backgroundColor;
-		textImage = cv::Mat(TEXT_HEIGHT, TEXT_WIDTH, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 		updateName(name);
 	}
 
 	void updateName(std::string name){
 		this->name = name;
-		cv::putText(textImage, name, cv::Point(0, TEXT_HEIGHT-5), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255, 255, 255, 255), 2, 8, false);
+		textImage = cv::Mat(TEXT_HEIGHT, TEXT_WIDTH, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+		cv::putText(textImage, name, cv::Point(0, TEXT_HEIGHT-5), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255, 255, 255, 255), 2, 8, false);
 	}
 
 	bool isInsde(CoordInt position, CoordInt pos, int Yoffset){
@@ -304,12 +304,12 @@ struct Marker{
 		this->iconIndex = iconIndex;
 		this->hitbox_size = hitbox_size;
 
-		textImage = cv::Mat(TEXT_HEIGHT, TEXT_WIDTH, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 		UpdateLabel(label);
 	}
 
 	void UpdateLabel(std::string label){
 		this->label = label;
+		textImage = cv::Mat(TEXT_HEIGHT, TEXT_WIDTH, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 		cv::putText(textImage, label, cv::Point(0, TEXT_HEIGHT-5), cv::FONT_HERSHEY_SIMPLEX, 0.5f, cv::Scalar(255, 255, 255, 255), 1, 8, false);
 	}
 
@@ -452,12 +452,16 @@ struct Scene{
 	bool isMouseRightDown = false;
 	bool isUnhandledRightMouseClick = false;
 
+	bool isUnhandledCharacterType = false;
+
 	bool changedWindowSize = false;
 	bool isMarkerSelected = false;
 
 	bool isLeftClickMenuActive = false;
 
 	bool isShiftDown = false;
+
+	bool isTyping = false;
 
 	Marker* selectedMarker;
 	int rightClickedMarkerIndex = -1;
@@ -486,6 +490,8 @@ struct Scene{
 	std::vector<cv::Mat> icons = {};
 	std::vector<Marker> markers = {};
 	std::vector<cv::Mat*> marker_icons = {};
+
+	std::string typedText = "";
 	
 	Scene(): backgroundImage(), w(), camera() {};
 	Scene(cv::Mat image, Window w, Camera camera){
@@ -546,6 +552,22 @@ struct Scene{
 		return im;
 	}
 
+	void startTyping(){
+		if(!isTyping){
+			SDL_StartTextInput();
+			typedText = "";
+			isTyping = true;
+		}
+	}
+
+	void stopTyping(){
+		if(isTyping){
+			SDL_StopTextInput();
+			typedText = "";
+			isTyping = false;
+		}
+	}
+
 	int init(){
 		loadIcons();
 		int res = w.init();
@@ -572,7 +594,8 @@ struct Scene{
 		colorDisplayScroll = GuiScrollComponent(CoordInt(200, 0), 1);
 
 		lClickMenu = LeftCLickMenu(CoordInt(0, 0));
-		lClickMenu.addOption(MenuOption(TEXT_WIDTH, TEXT_HEIGHT, "Delete", Color(172, 176, 189), Color(37, 22	, 5)));
+		lClickMenu.addOption(MenuOption(TEXT_WIDTH, TEXT_HEIGHT, "Delete", Color(172, 176, 189), Color(37, 22, 5)));
+		lClickMenu.addOption(MenuOption(TEXT_WIDTH, TEXT_HEIGHT, "Rename", Color(172, 176, 189), Color(37, 22, 5)));
 
 		updateIconScrollComponents();
 
@@ -605,6 +628,25 @@ struct Scene{
 			w.quit = true;
 		}
 
+		if(isTyping){
+			if(event.type == SDL_KEYDOWN){
+				if(event.key.keysym.sym == SDLK_ESCAPE || event.key.keysym.sym == SDLK_KP_ENTER || event.key.keysym.sym == SDLK_RETURN){
+					stopTyping();
+				}
+				if(event.key.keysym.sym == SDLK_BACKSPACE){
+					if(typedText.length() != 0){
+						typedText.pop_back();
+						isUnhandledCharacterType = true;
+					}
+				}
+			}
+
+			else if(event.type == SDL_TEXTINPUT){
+				typedText += event.text.text;
+				isUnhandledCharacterType = true;
+			}
+		}
+
 		if(event.type == SDL_WINDOWEVENT){
 			if(event.window.event == SDL_WINDOWEVENT_RESIZED){
 				changeOutputResolution(event.window.data1, event.window.data2);
@@ -615,9 +657,11 @@ struct Scene{
 		if(event.type == SDL_MOUSEWHEEL){
 			toScroll += event.wheel.y;
 			isLeftClickMenuActive = false;
+			stopTyping();
 		}
 
 		if(event.type == SDL_MOUSEBUTTONDOWN){
+			stopTyping();
 			if(event.button.button == SDL_BUTTON_LEFT){
 
 				isMouseLeftDown = true;
@@ -781,7 +825,6 @@ struct Scene{
 				}
 				if(i == markers.size()-1){
 					isLeftClickMenuActive = false;
-					rightClickedMarkerIndex = -1;
 				}
 			}
 			isUnhandledRightMouseClick = false;
@@ -789,21 +832,25 @@ struct Scene{
 
 		if(isUnhandledLeftMouseClick && isLeftClickMenuActive){
 			int option = lClickMenu.getOption(mousePosition);
+			if(option == -1){isLeftClickMenuActive = false;}
 			if(option == 0){
 				markers.erase(markers.begin()+rightClickedMarkerIndex);
 				isLeftClickMenuActive = false;
 				isUnhandledLeftMouseClick = false;
 				rightClickedMarkerIndex = -1;
+			}			
+			if(option == 1){
+				startTyping();
+				typedText = markers.at(rightClickedMarkerIndex).label;
+				isLeftClickMenuActive = false;
 			}
+		}
+		
+		if(isUnhandledCharacterType){
+			markers.at(rightClickedMarkerIndex).UpdateLabel(typedText);
+			isUnhandledCharacterType = false;
 		}
 
-		if(isUnhandledLeftMouseClick && isLeftClickMenuActive){
-			int option = lClickMenu.getOption(mousePosition);
-			if(option == -1){isLeftClickMenuActive = false;}
-			if(option == 0){
-				//TODO: DO Option 1
-			}
-		}
 		
 		if(toScroll != 0 && isInsideIconScrolls(mousePosition)){
 			primaryIconScroll.scroll(toScroll);

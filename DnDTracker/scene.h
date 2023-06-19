@@ -9,8 +9,13 @@
 #define DEFAULT_MAP_FILE_NAME "Assets\\default_map.png"
 #define LOG(x) std::cout << x << std::endl;
 #define ICON_RES 50
-#define TEXT_WIDTH 100
-#define TEXT_HEIGHT 30
+#define TEXT_WIDTH 200
+#define TEXT_HEIGHT 200
+
+#define MENU_OPTIONWIDTH 100
+#define MENU_OPTIONHEIGHT 30
+
+#define LINE_SPACE 5
 
 struct Coord{
 	float x;
@@ -225,8 +230,8 @@ struct MenuOption{
 
 	void updateName(std::string name){
 		this->name = name;
-		textImage = cv::Mat(TEXT_HEIGHT, TEXT_WIDTH, CV_8UC4, cv::Scalar(0, 0, 0, 0));
-		cv::putText(textImage, name, cv::Point(0, TEXT_HEIGHT-5), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255, 255, 255, 255), 2, 8, false);
+		textImage = cv::Mat(MENU_OPTIONHEIGHT, MENU_OPTIONWIDTH, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+		cv::putText(textImage, name, cv::Point(0, MENU_OPTIONHEIGHT-5), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255, 255, 255, 255), 2, 8, false);
 	}
 
 	bool isInsde(CoordInt position, CoordInt pos, int Yoffset){
@@ -241,7 +246,7 @@ struct MenuOption{
 		SDL_UpdateTexture(texture, NULL, textImage.data, textImage.cols * textImage.channels());
 		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
 		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-		SDL_Rect rect = {position.x, position.y+Yoffset, TEXT_WIDTH, TEXT_HEIGHT};
+		SDL_Rect rect = {position.x, position.y+Yoffset, MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT};
 		SDL_SetRenderDrawColor(renderer, backgroundColor.r, backgroundColor.g, backgroundColor.b, 255);
 		SDL_RenderFillRect(renderer, &rect);
 		SDL_SetTextureColorMod(texture, textColor.r, textColor.g, textColor.b);
@@ -310,7 +315,48 @@ struct Marker{
 	void UpdateLabel(std::string label){
 		this->label = label;
 		textImage = cv::Mat(TEXT_HEIGHT, TEXT_WIDTH, CV_8UC4, cv::Scalar(0, 0, 0, 0));
-		cv::putText(textImage, label, cv::Point(0, TEXT_HEIGHT-5), cv::FONT_HERSHEY_SIMPLEX, 0.5f, cv::Scalar(255, 255, 255, 255), 1, 8, false);
+
+		std::vector<std::string> lines;
+		std::string currentLine = "";
+
+		cv::Size textSize;
+		int baseline;
+		int lastSplitIndex = 0;
+
+		for(int i = 0; i < label.length(); i++){
+			currentLine += label.at(i);
+			textSize = cv::getTextSize(currentLine, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+
+			if(textSize.width > TEXT_WIDTH){
+				currentLine.pop_back();
+
+				if(currentLine.length() != 0){
+					lines.push_back(currentLine);
+					lastSplitIndex = i;
+				}
+
+				currentLine = label.at(i);
+			}
+		}
+
+		currentLine = label.substr(lastSplitIndex);
+		if(currentLine.length() != 0){
+			lines.push_back(currentLine);
+		}
+
+		cv::Point point;
+		int lineCount = lines.size();
+
+		for(int i = 0; i < lineCount; i++){
+			textSize = cv::getTextSize(lines.at(i), cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+			point = cv::Point(
+				(TEXT_WIDTH/2)-(textSize.width/2),
+				TEXT_HEIGHT - ((lineCount-i)*textSize.height + (lineCount-i-1)*LINE_SPACE)
+			);
+
+			cv::putText(textImage, lines.at(i), point, cv::FONT_HERSHEY_SIMPLEX, 0.5f, cv::Scalar(255, 255, 255, 255), 1, 8, false);
+		}
+
 	}
 
 	bool isVisible(Camera* camera){
@@ -484,6 +530,7 @@ struct Scene{
 	SDL_Texture* iconTexture;
 
 	SDL_Texture* textTexture;
+	SDL_Texture* menuTexture;
 
 	LeftCLickMenu lClickMenu;
 
@@ -575,6 +622,8 @@ struct Scene{
 		iconTexture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, ICON_RES, ICON_RES);
 		textTexture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, TEXT_WIDTH, TEXT_HEIGHT);
 
+		menuTexture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT);
+
 		uppermostIconScroll = GuiScrollComponent(CoordInt(0, 0), marker_icons.size());
 		upperIconScroll = GuiScrollComponent(CoordInt(0, 50), marker_icons.size());
 
@@ -594,8 +643,8 @@ struct Scene{
 		colorDisplayScroll = GuiScrollComponent(CoordInt(200, 0), 1);
 
 		lClickMenu = LeftCLickMenu(CoordInt(0, 0));
-		lClickMenu.addOption(MenuOption(TEXT_WIDTH, TEXT_HEIGHT, "Delete", Color(172, 176, 189), Color(37, 22, 5)));
-		lClickMenu.addOption(MenuOption(TEXT_WIDTH, TEXT_HEIGHT, "Rename", Color(172, 176, 189), Color(37, 22, 5)));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Delete", Color(172, 176, 189), Color(37, 22, 5)));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Rename", Color(172, 176, 189), Color(37, 22, 5)));
 
 		updateIconScrollComponents();
 
@@ -796,7 +845,7 @@ struct Scene{
 		colorDisplayScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex));
 
 		if(isLeftClickMenuActive){
-			lClickMenu.render(w.renderer, textTexture);
+			lClickMenu.render(w.renderer, menuTexture);
 		}
 
 		SDL_RenderPresent(w.renderer);
@@ -891,7 +940,7 @@ struct Scene{
 			if(lowerIconScroll.isInside(mousePosition)){pt = &lowerIconScroll;}
 			if(lowestIconScroll.isInside(mousePosition)){pt = &lowestIconScroll;}
 			if(pt != NULL){
-				addMarker(Marker(mousePosition, Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex), Color(255, 255, 255), "new Marker", (*pt).scrollIndex, 25));
+				addMarker(Marker(mousePosition, Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex), Color(0, 0, 0), "new Marker", (*pt).scrollIndex, 25));
 				selectedMarker = &(markers.at(markers.size() - 1));
 				isMarkerSelected = true;
 			}

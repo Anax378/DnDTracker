@@ -329,21 +329,27 @@ struct Marker{
 			currentLine += label.at(i);
 			textSize = cv::getTextSize(currentLine, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
 
-			if(textSize.width > TEXT_WIDTH){
-				currentLine.pop_back();
-
+			if(textSize.width > TEXT_WIDTH || (i == 0 ? false : label.at(i-1) == '\n') ){
 				if(currentLine.length() != 0){
+					currentLine.pop_back();
+					if(i == 0 ? false : label.at(i-1) == '\n'){
+						currentLine.pop_back();
+					}
 					lines.push_back(currentLine);
 					lastSplitIndex = i;
 				}
-
 				currentLine = label.at(i);
 			}
 		}
 
 		currentLine = label.substr(lastSplitIndex);
+		LOG(currentLine.length());
 		if(currentLine.length() != 0){
 			lines.push_back(currentLine);
+			if((label.size() == 0 ? false : label.at(label.size()-1) == '\n')){
+				lines.at(lines.size()-1).pop_back();
+				lines.push_back("");
+			}
 		}
 
 		cv::Point point;
@@ -685,8 +691,12 @@ struct Scene{
 
 		if(isTyping){
 			if(event.type == SDL_KEYDOWN){
-				if(event.key.keysym.sym == SDLK_ESCAPE || event.key.keysym.sym == SDLK_KP_ENTER || event.key.keysym.sym == SDLK_RETURN){
+				if(event.key.keysym.sym == SDLK_ESCAPE){
 					stopTyping();
+				}
+				if(event.key.keysym.sym == SDLK_KP_ENTER || event.key.keysym.sym == SDLK_RETURN){
+					typedText += '\n';
+					isUnhandledCharacterType = true;
 				}
 				if(event.key.keysym.sym == SDLK_BACKSPACE){
 					if(typedText.length() != 0){

@@ -17,6 +17,8 @@
 
 #define LINE_SPACE 5
 
+#define TEXT_BOX_COLOR Color(0, 255, 0)
+
 struct Coord{
 	float x;
 	float y;
@@ -374,12 +376,12 @@ struct Marker{
 		return true;
 	}
 
-	void render(SDL_Renderer* renderer, SDL_Texture* texture, Camera* camera, cv::Mat* icon, SDL_Texture* textTexture){
+	void render(SDL_Renderer* renderer, SDL_Texture* texture, Camera* camera, cv::Mat* icon, SDL_Texture* textTexture, bool showTextBox){
 		SDL_UpdateTexture(texture, NULL, (*icon).data, (*icon).cols * (*icon).channels());
 		CoordInt renderPos = (*camera).toCameraCoordinates(position);
 		SDL_Rect rect = {renderPos.x - (ICON_RES/2), renderPos.y-(ICON_RES/2), ICON_RES, ICON_RES};
 		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);	
+		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 		SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
 
 		SDL_SetTextureBlendMode(textTexture, SDL_BLENDMODE_BLEND);
@@ -389,6 +391,10 @@ struct Marker{
 
 		SDL_RenderCopy(renderer, texture, NULL, &rect);
 		SDL_RenderCopy(renderer, textTexture, NULL, &textRect);
+		if(showTextBox){
+		SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+		SDL_RenderDrawRect(renderer, &textRect);
+		}
 
 		SDL_SetTextureColorMod(textTexture, 255, 255, 255);
 		SDL_SetTextureColorMod(texture, 255, 255, 255);
@@ -789,7 +795,7 @@ struct Scene{
 				}else{
 					pt = marker_icons.at(markers.at(i).iconIndex);
 				}
-				markers.at(i).render(renderer, iconTexture, &camera, pt, textTexture);
+				markers.at(i).render(renderer, iconTexture, &camera, pt, textTexture, isTyping && i == rightClickedMarkerIndex);
 			}
 		}
 	}

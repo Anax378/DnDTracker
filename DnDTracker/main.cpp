@@ -11,7 +11,8 @@ int main(int argc, char* argv[]){
 	}
 
 	
-	Scene scene = Scene(Scene::readDefaultImage(), Window(500, 500, "TEST"), Camera(CoordInt(0, 0), 500, 500, 500, 500));
+	Scene scene = Scene(Window(500, 500, "TEST"), Camera(CoordInt(0, 0), 500, 500, 500, 500));
+	scene.addLevel(scene.getDefaultLevel());
 	int res = 0;
 	res = scene.init();
 	if(res != 0){

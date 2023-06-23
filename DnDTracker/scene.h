@@ -12,7 +12,7 @@
 #define TEXT_WIDTH 200
 #define TEXT_HEIGHT 200
 
-#define MENU_OPTIONWIDTH 100
+#define MENU_OPTIONWIDTH 150
 #define MENU_OPTIONHEIGHT 30
 
 #define LINE_SPACE 5
@@ -155,7 +155,7 @@ struct Camera{
 	cv::Mat getBackgroundImage(cv::Mat image){
 		cv::Mat ret;
 		cv::Mat im = image(cv::Rect(position.x, position.y, width, height));
-		cv::resize(im, ret, cv::Size(renderWidth,renderHeight), 0, 0);
+		cv::resize(im, ret, cv::Size(renderWidth, renderHeight), 0, 0);
 		return ret;
 	}
 
@@ -215,18 +215,20 @@ struct MenuOption{
 	Color backgroundColor;
 
 	cv::Mat textImage;
+	bool isEnabled = true;
 
 	std::string name;
 	int width;
 	int height;
 
 	MenuOption(): textColor(), backgroundColor(), name(), width(), height() {}
-	MenuOption(int width, int height, std::string name, Color textColor, Color backgroundColor){
+	MenuOption(int width, int height, std::string name, Color textColor, Color backgroundColor,bool isEnabled = true){
 		this->width = width;
 		this->height = height;
 		this->name = name;
 		this->textColor = textColor;
 		this->backgroundColor = backgroundColor;
+		this->isEnabled = isEnabled;
 		updateName(name);
 	}
 
@@ -237,6 +239,7 @@ struct MenuOption{
 	}
 
 	bool isInsde(CoordInt position, CoordInt pos, int Yoffset){
+		if(!isEnabled){return false;}
 		if(pos.x < position.x){return false;}
 		if(pos.y < position.y+Yoffset){return false;}
 		if(pos.x > position.x+width){return false;}
@@ -274,7 +277,9 @@ struct LeftCLickMenu{
 			if(options.at(i).isInsde(position, pos, Yoffset)){
 				return i;
 			}
-			Yoffset += options.at(i).height;
+			if(options.at(i).isEnabled){
+				Yoffset += options.at(i).height;
+			}
 		}
 		return -1;
 	}
@@ -282,8 +287,10 @@ struct LeftCLickMenu{
 	void render(SDL_Renderer* renderer, SDL_Texture* texture){
 		int Yoffset = 0;
 		for(int i = 0; i < options.size(); i++){
-			options.at(i).render(renderer, texture, position, Yoffset);
-			Yoffset += options.at(i).height;
+			if(options.at(i).isEnabled){
+				options.at(i).render(renderer, texture, position, Yoffset);
+				Yoffset += options.at(i).height;
+			}
 		}
 	}
 
@@ -300,6 +307,8 @@ struct Marker{
 	std::string label;
 	int iconIndex;
 	int hitbox_size;
+
+	int levelLink = -1;
 
 	cv::Mat textImage;
 
@@ -343,7 +352,6 @@ struct Marker{
 		}
 
 		currentLine = label.substr(lastSplitIndex);
-		LOG(currentLine.length());
 		if(currentLine.length() != 0){
 			lines.push_back(currentLine);
 			if((label.size() == 0 ? false : label.at(label.size()-1) == '\n')){
@@ -486,13 +494,25 @@ struct GuiColorScrollComponent{
 
 };
 
+struct Level {
+	int parentId;
+	cv::Mat backgroundImage;
+	std::vector<Marker> markers = {};
+
+	Level(): backgroundImage(){}
+	Level(cv::Mat backgroundimage, int parentId){
+		this->backgroundImage = backgroundimage;
+		this->parentId = parentId;
+	}
+
+};
+
 
 struct Scene{
 	float zoomSpeed = -0.1f;
 
 	Window w;
 	Camera camera;
-	cv::Mat backgroundImage;
 	CoordInt mousePosition = CoordInt(0, 0);
 	CoordInt mouseLeftDownPosition = CoordInt(0, 0);
 	CoordInt mouseLeftDownCameraPosition = CoordInt(0, 0);
@@ -504,22 +524,19 @@ struct Scene{
 	int baseZoomCameraWidth;
 	int baseZoomCameraHeight;
 
+	int currentLevel = 0;
+
 	bool isMouseLeftDown = false;
 	bool isUnhandledLeftMouseClick = false;
-
 	bool isMouseRightDown = false;
 	bool isUnhandledRightMouseClick = false;
-
 	bool isUnhandledCharacterType = false;
-
 	bool changedWindowSize = false;
 	bool isMarkerSelected = false;
-
 	bool isLeftClickMenuActive = false;
-
 	bool isShiftDown = false;
-
 	bool isTyping = false;
+	bool isUnhandledEscape = false;
 
 	Marker* selectedMarker;
 	int rightClickedMarkerIndex = -1;
@@ -547,14 +564,12 @@ struct Scene{
 	LeftCLickMenu lClickMenu;
 
 	std::vector<cv::Mat> icons = {};
-	std::vector<Marker> markers = {};
 	std::vector<cv::Mat*> marker_icons = {};
-
 	std::string typedText = "";
+	std::vector<Level> levels = {};
 	
-	Scene(): backgroundImage(), w(), camera() {};
-	Scene(cv::Mat image, Window w, Camera camera){
-		this->backgroundImage = image;
+	Scene(): w(), camera() {};
+	Scene(Window w, Camera camera){
 		this->w = w;
 		this->camera = camera;
 		this->originalCameraWidth = camera.width;
@@ -562,6 +577,26 @@ struct Scene{
 
 		this->baseZoomCameraWidth = camera.width;
 		this->baseZoomCameraHeight = camera.height;
+	}
+
+	Level getDefaultLevel(){
+		return Level(readDefaultImage(), -1);
+	}
+
+	void resetGui(){
+		isMouseLeftDown = false;
+		isUnhandledLeftMouseClick = false;
+		isMouseRightDown = false;
+		isUnhandledRightMouseClick = false;
+		isUnhandledCharacterType = false;
+		changedWindowSize = false;
+		isMarkerSelected = false;
+		isLeftClickMenuActive = false;
+		isShiftDown = false;
+		isUnhandledEscape = false;
+		toScroll = 0;
+		zoomFactor = 1.0f;
+		stopTyping();
 	}
 
 	void updateIconScrollComponents(){
@@ -604,11 +639,14 @@ struct Scene{
 	}
 
 	static cv::Mat readDefaultImage(){
-
 		std::cout << std::filesystem::exists(DEFAULT_MAP_FILE_NAME) << std::endl;
 		cv::Mat im = cv::imread(DEFAULT_MAP_FILE_NAME);
 		//cv::Mat im = Scene::generateNoiseImage(1000, 1000);
 		return im;
+	}
+
+	void addLevel(Level level){
+		levels.push_back(level);
 	}
 
 	void startTyping(){
@@ -657,10 +695,17 @@ struct Scene{
 		lClickMenu = LeftCLickMenu(CoordInt(0, 0));
 		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Delete", Color(172, 176, 189), Color(37, 22, 5)));
 		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Rename", Color(172, 176, 189), Color(37, 22, 5)));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "+ Level", Color(172, 176, 189), Color(37, 22, 5)));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Open", Color(172, 176, 189), Color(37, 22, 5), false));
 
 		updateIconScrollComponents();
 
 		return res;
+	}
+
+	cv::Mat getImageFromUser(){
+		//TODO make this get image file from user
+		return readDefaultImage();
 	}
 
 	void loadIcons(){
@@ -675,7 +720,7 @@ struct Scene{
 	}
 
 	void addMarker(Marker marker){
-		markers.push_back(marker);
+		levels.at(currentLevel).markers.push_back(marker);
 	}
 
 	void alignCameraAspectRatio(){
@@ -691,9 +736,6 @@ struct Scene{
 
 		if(isTyping){
 			if(event.type == SDL_KEYDOWN){
-				if(event.key.keysym.sym == SDLK_ESCAPE){
-					stopTyping();
-				}
 				if(event.key.keysym.sym == SDLK_KP_ENTER || event.key.keysym.sym == SDLK_RETURN){
 					typedText += '\n';
 					isUnhandledCharacterType = true;
@@ -738,10 +780,10 @@ struct Scene{
 				SDL_GetMouseState(
 					&(mousePosition.x),
 					&(mousePosition.y));
-				for(int i = 0; i < markers.size(); i++){
-					if(markers.at(i).isInside(mousePosition, &camera)){
+				for(int i = 0; i < levels.at(currentLevel).markers.size(); i++){
+					if(levels.at(currentLevel).markers.at(i).isInside(mousePosition, &camera)){
 						isMarkerSelected = true;
-						selectedMarker = &(markers.at(i));
+						selectedMarker = &(levels.at(currentLevel).markers.at(i));
 						break;
 					}
 				}
@@ -766,15 +808,16 @@ struct Scene{
 		if(event.type == SDL_KEYDOWN){
 			if(event.key.keysym.sym == SDLK_DELETE){
 				if(!isMarkerSelected){
-					for(int i = 0; i < markers.size(); i++){
-						if(markers.at(i).isInside(mousePosition, &camera)){
-							markers.erase(markers.begin()+i);
+					for(int i = 0; i < levels.at(currentLevel).markers.size(); i++){
+						if(levels.at(currentLevel).markers.at(i).isInside(mousePosition, &camera)){
+							levels.at(currentLevel).markers.erase(levels.at(currentLevel).markers.begin()+i);
 						}
 					}
 				}
 				isLeftClickMenuActive = false;
 			}
 			if(event.key.keysym.sym == SDLK_LSHIFT){isShiftDown = true;}
+			if(event.key.keysym.sym == SDLK_ESCAPE){isUnhandledEscape = true;}
 		}
 		if(event.type == SDL_KEYUP){
 			if(event.key.keysym.sym == SDLK_LSHIFT){isShiftDown = false;}
@@ -785,27 +828,27 @@ struct Scene{
 
 	float getMaxZoomFactor(){
 		return std::min(
-			(float)backgroundImage.cols/(float)baseZoomCameraWidth,
-			(float)backgroundImage.rows/(float)baseZoomCameraHeight
+			(float)levels.at(currentLevel).backgroundImage.cols/(float)baseZoomCameraWidth,
+			(float)levels.at(currentLevel).backgroundImage.rows/(float)baseZoomCameraHeight
 		);
 	}
 	void renderBackground(SDL_Renderer* renderer){
-		cv::Mat image = camera.getBackgroundImage(backgroundImage);
+		cv::Mat image = camera.getBackgroundImage(levels.at(currentLevel).backgroundImage);
 		SDL_UpdateTexture(texture, NULL, image.data, image.cols*3);
 		SDL_RenderCopy(renderer, texture, NULL, NULL);
 
 	}
 
 	void renderMarkers(SDL_Renderer* renderer){
-		for(int i = 0; i < markers.size(); i++){
-			if(markers.at(i).isVisible(&camera)){
+		for(int i = 0; i < levels.at(currentLevel).markers.size(); i++){
+			if(levels.at(currentLevel).markers.at(i).isVisible(&camera)){
 				cv::Mat* pt;
-				if(markers.at(i).iconIndex >= marker_icons.size()){
+				if(levels.at(currentLevel).markers.at(i).iconIndex >= marker_icons.size()){
 					pt = marker_icons.at(0);
 				}else{
-					pt = marker_icons.at(markers.at(i).iconIndex);
+					pt = marker_icons.at(levels.at(currentLevel).markers.at(i).iconIndex);
 				}
-				markers.at(i).render(renderer, iconTexture, &camera, pt, textTexture, isTyping && i == rightClickedMarkerIndex);
+				levels.at(currentLevel).markers.at(i).render(renderer, iconTexture, &camera, pt, textTexture, isTyping && i == rightClickedMarkerIndex);
 			}
 		}
 	}
@@ -839,14 +882,14 @@ struct Scene{
 		if(camera.position.x < 0){camera.position.x = 0;}
 		if(camera.position.y < 0){camera.position.y = 0;}
 
-		if(camera.width > backgroundImage.cols){camera.width = backgroundImage.cols;}
-		if(camera.height > backgroundImage.rows){camera.height = backgroundImage.rows;}
+		if(camera.width > levels.at(currentLevel).backgroundImage.cols){camera.width = levels.at(currentLevel).backgroundImage.cols;}
+		if(camera.height > levels.at(currentLevel).backgroundImage.rows){camera.height = levels.at(currentLevel).backgroundImage.rows;}
 
-		if(camera.position.x+camera.width > backgroundImage.cols){
-			camera.position.x -= camera.position.x+camera.width-backgroundImage.cols;
+		if(camera.position.x+camera.width > levels.at(currentLevel).backgroundImage.cols){
+			camera.position.x -= camera.position.x+camera.width-levels.at(currentLevel).backgroundImage.cols;
 		}
-		if(camera.position.y+camera.height > backgroundImage.rows){
-			camera.position.y -= camera.position.y+camera.height-backgroundImage.rows;
+		if(camera.position.y+camera.height > levels.at(currentLevel).backgroundImage.rows){
+			camera.position.y -= camera.position.y+camera.height-levels.at(currentLevel).backgroundImage.rows;
 		}
 	}
 
@@ -880,15 +923,33 @@ struct Scene{
 			changedWindowSize = false;
 		}
 
+		if(isUnhandledEscape){
+			if(levels.at(currentLevel).parentId < 0){}
+			else{
+
+				currentLevel = levels.at(currentLevel).parentId;
+				resetGui();
+			}
+			isUnhandledEscape = false;
+		}
+
 		if(isUnhandledRightMouseClick){
-			for(int i = 0; i < markers.size(); i++){
-				if(markers.at(i).isInside(mousePosition, &camera)){
+			for(int i = 0; i < levels.at(currentLevel).markers.size(); i++){
+				if(levels.at(currentLevel).markers.at(i).isInside(mousePosition, &camera)){
 					lClickMenu.position = mousePosition;
+					if(levels.at(currentLevel).markers.at(i).levelLink < 0){
+						lClickMenu.options.at(2).isEnabled = true;
+						lClickMenu.options.at(3).isEnabled = false;
+					}else{
+						lClickMenu.options.at(2).isEnabled = false;
+						lClickMenu.options.at(3).isEnabled = true;
+					}
+
 					isLeftClickMenuActive = true;
 					rightClickedMarkerIndex = i;
 					break;
 				}
-				if(i == markers.size()-1){
+				if(i == levels.at(currentLevel).markers.size()-1){
 					isLeftClickMenuActive = false;
 				}
 			}
@@ -897,22 +958,31 @@ struct Scene{
 
 		if(isUnhandledLeftMouseClick && isLeftClickMenuActive){
 			int option = lClickMenu.getOption(mousePosition);
-			if(option == -1){isLeftClickMenuActive = false;}
+			if(option == -1){}
 			if(option == 0){
-				markers.erase(markers.begin()+rightClickedMarkerIndex);
-				isLeftClickMenuActive = false;
-				isUnhandledLeftMouseClick = false;
+				levels.at(currentLevel).markers.erase(levels.at(currentLevel).markers.begin()+rightClickedMarkerIndex);
 				rightClickedMarkerIndex = -1;
 			}			
 			if(option == 1){
 				startTyping();
-				typedText = markers.at(rightClickedMarkerIndex).label;
+				typedText = levels.at(currentLevel).markers.at(rightClickedMarkerIndex).label;
 				isLeftClickMenuActive = false;
 			}
+			if(option == 2){
+				int newLevelId = levels.size();
+				levels.push_back(Level(getImageFromUser(), currentLevel));
+				levels.at(currentLevel).markers.at(rightClickedMarkerIndex).levelLink = newLevelId;
+			}
+			if(option == 3){
+				currentLevel = levels.at(currentLevel).markers.at(rightClickedMarkerIndex).levelLink;
+				resetGui();
+			}
+			isLeftClickMenuActive = false;
+			isUnhandledLeftMouseClick = false;
 		}
 		
 		if(isUnhandledCharacterType){
-			markers.at(rightClickedMarkerIndex).UpdateLabel(typedText);
+			levels.at(currentLevel).markers.at(rightClickedMarkerIndex).UpdateLabel(typedText);
 			isUnhandledCharacterType = false;
 		}
 
@@ -947,6 +1017,7 @@ struct Scene{
 		}
 		zoomToFactor(zoomFactor);
 		toScroll = 0;
+		toScroll = 0;
 
 		if(isUnhandledLeftMouseClick && !isMarkerSelected){
 			GuiScrollComponent* pt = NULL;
@@ -957,7 +1028,7 @@ struct Scene{
 			if(lowestIconScroll.isInside(mousePosition)){pt = &lowestIconScroll;}
 			if(pt != NULL){
 				addMarker(Marker(mousePosition, Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex), Color(0, 0, 0), "new Marker", (*pt).scrollIndex, 25));
-				selectedMarker = &(markers.at(markers.size() - 1));
+				selectedMarker = &(levels.at(currentLevel).markers.at(levels.at(currentLevel).markers.size() - 1));
 				isMarkerSelected = true;
 			}
 		}

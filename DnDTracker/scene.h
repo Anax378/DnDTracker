@@ -1,4 +1,5 @@
 #pragma once
+#include "FileIO.h"
 #include <SDL.h>
 #include <iostream>
 #include <string>
@@ -18,6 +19,11 @@
 #define LINE_SPACE 5
 
 #define TEXT_BOX_COLOR Color(0, 255, 0)
+
+#define OPTION_DELETE 1
+#define OPTION_RENAME 2
+#define OPTION_ADD_LEVEL 3
+#define OPTION_OPEN_LEVEL 4
 
 struct Coord{
 	float x;
@@ -221,14 +227,17 @@ struct MenuOption{
 	int width;
 	int height;
 
+	int optionType;
+
 	MenuOption(): textColor(), backgroundColor(), name(), width(), height() {}
-	MenuOption(int width, int height, std::string name, Color textColor, Color backgroundColor,bool isEnabled = true){
+	MenuOption(int width, int height, std::string name, Color textColor, Color backgroundColor, int optionType,bool isEnabled = true){
 		this->width = width;
 		this->height = height;
 		this->name = name;
 		this->textColor = textColor;
 		this->backgroundColor = backgroundColor;
 		this->isEnabled = isEnabled;
+		this->optionType = optionType;
 		updateName(name);
 	}
 
@@ -568,7 +577,6 @@ struct Scene{
 	std::string typedText = "";
 	std::vector<Level> levels = {};
 	
-	Scene(): w(), camera() {};
 	Scene(Window w, Camera camera){
 		this->w = w;
 		this->camera = camera;
@@ -580,7 +588,7 @@ struct Scene{
 	}
 
 	Level getDefaultLevel(){
-		return Level(readDefaultImage(), -1);
+		return Level(getImageFromUser(), -1);
 	}
 
 	void resetGui(){
@@ -645,6 +653,20 @@ struct Scene{
 		return im;
 	}
 
+	static Scene createSceneFromImage(cv::Mat image){
+		int minRes = std::min(image.cols, image.rows);
+		Scene scene = Scene(
+			Window(500, 500, "Default Scene"),
+			Camera(CoordInt(0, 0), minRes, minRes, 500, 500)
+		);
+		scene.addLevel(Level(image, -1));
+		return scene;
+	}
+
+	static Scene getDefaultScene(){
+		return createSceneFromImage(getImageFromUser());
+	}
+
 	void addLevel(Level level){
 		levels.push_back(level);
 	}
@@ -693,26 +715,54 @@ struct Scene{
 		colorDisplayScroll = GuiScrollComponent(CoordInt(200, 0), 1);
 
 		lClickMenu = LeftCLickMenu(CoordInt(0, 0));
-		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Delete", Color(172, 176, 189), Color(37, 22, 5)));
-		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Rename", Color(172, 176, 189), Color(37, 22, 5)));
-		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "+ Level", Color(172, 176, 189), Color(37, 22, 5)));
-		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Open", Color(172, 176, 189), Color(37, 22, 5), false));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Delete", Color(172, 176, 189), Color(37, 22, 5), OPTION_DELETE));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Rename", Color(172, 176, 189), Color(37, 22, 5), OPTION_RENAME));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "+ Level", Color(172, 176, 189), Color(37, 22, 5), OPTION_ADD_LEVEL));
+		lClickMenu.addOption(MenuOption(MENU_OPTIONWIDTH, MENU_OPTIONHEIGHT, "Open", Color(172, 176, 189), Color(37, 22, 5), OPTION_OPEN_LEVEL, false));
 
 		updateIconScrollComponents();
 
 		return res;
 	}
 
-	cv::Mat getImageFromUser(){
-		//TODO make this get image file from user
-		return readDefaultImage();
+	static cv::Mat getImageFromUser(){
+		cv::Mat image;
+		std::string path = "";
+
+	read_again:
+		path = getFileFromUser(std::vector<std::string> {"bmp", "dib", "jpeg", "jpg", "jpe", "jp2", "png", "webp", "pbm", "pgm", "ppm", "pxm", "pnm", "sr", "ras", "tiff", "tif", "exr", "hdr", "pic"});
+		if(path.length() == 0){goto read_again;}
+		if(!std::filesystem::exists(path)){goto read_again;}
+		image = cv::imread(path, cv::IMREAD_COLOR);
+		if(image.empty()){goto read_again;}
+
+		std::cout << path << std::endl;
+
+		return image;
+	}
+
+	static std::string getExecutableDirectory()
+	{
+		char path[FILENAME_MAX];
+		std::size_t length = sizeof(path);
+
+		if (::GetModuleFileNameA(NULL, path, length) != 0)
+		{
+			std::filesystem::path executablePath = std::filesystem::path(path);
+			return executablePath.parent_path().string();
+		}
+
+		return "";
 	}
 
 	void loadIcons(){
-		icons.push_back(cv::imread("Assets\\icon1.png", cv::IMREAD_UNCHANGED));
-		icons.push_back(cv::imread("Assets\\marker_toggle.png", cv::IMREAD_UNCHANGED));
-		icons.push_back(cv::imread("Assets\\icon2.png", cv::IMREAD_UNCHANGED));
-		icons.push_back(cv::imread("Assets\\WHITE.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::imread(getExecutableDirectory() + "\\Assets\\icon1.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::imread(getExecutableDirectory() + "\\Assets\\marker_toggle.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::imread(getExecutableDirectory() + "\\Assets\\icon2.png", cv::IMREAD_UNCHANGED));
+		icons.push_back(cv::Mat(50, 50, CV_8UC4 ,cv::Scalar(255, 255, 255, 255)));
+
+		std::cout << getExecutableDirectory() + "\\Assets\\icon1.png" <<std::endl;
+		std::cout << std::filesystem::exists(getExecutableDirectory() + "\\Assets\\icon1.png") << std::endl;
 
 		marker_icons.push_back( &(icons.at(0)) );
 		marker_icons.push_back( &(icons.at(2)) );
@@ -817,7 +867,9 @@ struct Scene{
 				isLeftClickMenuActive = false;
 			}
 			if(event.key.keysym.sym == SDLK_LSHIFT){isShiftDown = true;}
-			if(event.key.keysym.sym == SDLK_ESCAPE){isUnhandledEscape = true;}
+			if(event.key.keysym.sym == SDLK_ESCAPE){
+				isUnhandledEscape = true && !isTyping;
+			}
 		}
 		if(event.type == SDL_KEYUP){
 			if(event.key.keysym.sym == SDLK_LSHIFT){isShiftDown = false;}
@@ -957,23 +1009,33 @@ struct Scene{
 		}
 
 		if(isUnhandledLeftMouseClick && isLeftClickMenuActive){
-			int option = lClickMenu.getOption(mousePosition);
-			if(option == -1){}
-			if(option == 0){
+			int optionIndex = lClickMenu.getOption(mousePosition);
+			int option;
+			if(optionIndex < 0){
+				option == -1;
+			}
+			else{
+				option = lClickMenu.options.at(optionIndex).optionType;
+			}
+
+			if(option == -1){
+
+			}
+			if(option == OPTION_DELETE){
 				levels.at(currentLevel).markers.erase(levels.at(currentLevel).markers.begin()+rightClickedMarkerIndex);
 				rightClickedMarkerIndex = -1;
 			}			
-			if(option == 1){
+			if(option == OPTION_RENAME){
 				startTyping();
 				typedText = levels.at(currentLevel).markers.at(rightClickedMarkerIndex).label;
 				isLeftClickMenuActive = false;
 			}
-			if(option == 2){
+			if(option == OPTION_ADD_LEVEL){
 				int newLevelId = levels.size();
 				levels.push_back(Level(getImageFromUser(), currentLevel));
 				levels.at(currentLevel).markers.at(rightClickedMarkerIndex).levelLink = newLevelId;
 			}
-			if(option == 3){
+			if(option == OPTION_OPEN_LEVEL){
 				currentLevel = levels.at(currentLevel).markers.at(rightClickedMarkerIndex).levelLink;
 				resetGui();
 			}

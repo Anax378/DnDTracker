@@ -9,16 +9,11 @@ int main(int argc, char* argv[]){
 		std::cout << "failed to init sdl video" << std::endl;
 		return 1;
 	}
+	
+	Scene scene = Scene::getDefaultScene();
+	
+	scene.init();
 
-	
-	Scene scene = Scene(Window(500, 500, "TEST"), Camera(CoordInt(0, 0), 500, 500, 500, 500));
-	scene.addLevel(scene.getDefaultLevel());
-	int res = 0;
-	res = scene.init();
-	if(res != 0){
-		return res;
-	}
-	
 	SDL_Event event;
 
 	int fpsc = 0;

@@ -2,9 +2,15 @@
 #include "FileIO.h"
 #include <SDL.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <queue>
 #include <filesystem>
+#include <unordered_map>
+#include <tuple>
+#include <algorithm>
+#include <cctype>
+#include <string>
 #include "opencv2/opencv.hpp"
 
 #define DEFAULT_MAP_FILE_NAME "Assets\\default_map.png"
@@ -24,6 +30,46 @@
 #define OPTION_RENAME 2
 #define OPTION_ADD_LEVEL 3
 #define OPTION_OPEN_LEVEL 4
+
+#define FILE_FORMAT_VERSION 10003
+
+#define FILE_EXTENSION "dndt"
+
+#define VALID_IMAGE_EXTENSIONS {"bmp", "dib", "jpeg", "jpg", "jpe", "jp2", "png", "webp", "pbm", "pgm", "ppm", "pxm", "pnm", "sr", "ras", "tiff", "tif", "exr", "hdr", "pic"}
+
+std::vector<unsigned char> intToBytes(int32_t x){
+	std::vector<unsigned char> buffer =  {};
+	buffer.push_back((x>>(8*0))&0xff);
+	buffer.push_back((x>>(8*1))&0xff);
+	buffer.push_back((x>>(8*2))&0xff);
+	buffer.push_back((x>>(8*3))&0xff);
+	return buffer;
+}
+
+int intFromBytes(const std::vector<unsigned char>* bytes, int offset) {
+	int32_t result = 0;
+	for (int i = offset; i < 4 + offset; ++i) {
+		result |= static_cast<int32_t>(bytes->at(i)) << (8 * (i-offset));
+	}
+	return result;
+}
+
+
+template <typename T>
+
+void addVectors(std::vector<T>& a, std::vector<T> b){
+	for(int i = 0; i < b.size(); i++){
+		a.push_back(b.at(i));
+	}
+}
+
+std::vector<unsigned char> stringToBytes(std::string x){
+	std::vector<unsigned char> data = {};
+	for(int i = 0; i < x.size(); i++){
+		data.push_back(x.at(i));
+	}
+	return data;
+}
 
 struct Coord{
 	float x;
@@ -46,6 +92,12 @@ struct CoordInt{
 
 	CoordInt add(CoordInt other){
 		return CoordInt(x+other.x, y+other.y);
+	}
+
+	std::vector<unsigned char> getSaveData(){
+		std::vector<unsigned char> toReturn = intToBytes(x);
+		addVectors(toReturn, intToBytes(y));
+		return toReturn;
 	}
 };
 
@@ -104,6 +156,13 @@ struct Color{
 		this->r = r;
 		this->g = g;
 		this->b = b;
+	}
+	std::vector<unsigned char> getSaveData(){
+		return std::vector<unsigned char> {r, g, b};
+	}
+
+	static Color fromBuffer(std::vector<unsigned char>* data, int offset){
+		return Color(data->at(offset), data->at(offset+1), data->at(offset+2));
 	}
 };
 
@@ -314,19 +373,19 @@ struct Marker{
 	Color color;
 	Color labelColor;
 	std::string label;
-	int iconIndex;
+	int iconId;
 	int hitbox_size;
 
 	int levelLink = -1;
 
 	cv::Mat textImage;
 
-	Marker(): position(), color(), labelColor(), iconIndex(), label() {};
+	Marker(): position(), color(), labelColor(), iconId(), label() {};
 	Marker(CoordInt position, Color color, Color labelColor, std::string label, int iconIndex, int hitbox_size){
 		this->position = position;
 		this->color = color;
 		this->labelColor = labelColor;
-		this->iconIndex = iconIndex;
+		this->iconId = iconIndex;
 		this->hitbox_size = hitbox_size;
 
 		UpdateLabel(label);
@@ -390,6 +449,18 @@ struct Marker{
 		//TODO: do not render unseen markers;
 	}
 
+	std::vector<unsigned char> getSaveData(){
+		std::vector<unsigned char> saveData = {};
+		addVectors(saveData, position.getSaveData());
+		addVectors(saveData, intToBytes(levelLink));
+		addVectors(saveData, intToBytes(iconId));
+		addVectors(saveData, color.getSaveData());
+		addVectors(saveData, labelColor.getSaveData());
+		addVectors(saveData, intToBytes(label.size()));
+		addVectors(saveData, stringToBytes(label));
+		return saveData;
+	}
+
 	bool isInside(CoordInt pos, Camera* camera){
 		CoordInt screenPos = camera->toCameraCoordinates(position);
 		if(screenPos.x < pos.x - hitbox_size){return false;}
@@ -421,6 +492,24 @@ struct Marker{
 
 		SDL_SetTextureColorMod(textTexture, 255, 255, 255);
 		SDL_SetTextureColorMod(texture, 255, 255, 255);
+	}
+
+	static Marker fromBuffer(std::vector<unsigned char>* data, int offset){
+		Marker marker = Marker();
+		marker.position.x = intFromBytes(data, offset);
+		marker.position.y = intFromBytes(data, offset + 4);
+		marker.levelLink = intFromBytes(data, offset + 8);
+		marker.iconId = intFromBytes(data, offset + 12);
+		marker.color = Color::fromBuffer(data, offset + 16);
+		marker.labelColor = Color::fromBuffer(data, offset + 19);
+		int labelSize = intFromBytes(data, offset + 22);
+		std::string label;
+		for(int i = offset + 26; i < offset + 26 + labelSize; i++){
+			label.push_back(data->at(i));
+		}
+		marker.UpdateLabel(label);
+		marker.hitbox_size = ICON_RES/2;
+		return marker;
 	}
 
 };
@@ -514,6 +603,42 @@ struct Level {
 		this->parentId = parentId;
 	}
 
+	std::vector<unsigned char> getSaveData(){
+		std::vector<unsigned char> data = {};
+		addVectors(data, intToBytes(parentId));
+		addVectors(data, intToBytes(markers.size()));
+		std::vector<unsigned char> imageData = {};
+		cv::imencode(".png", backgroundImage, imageData, std::vector<int>{cv::IMWRITE_PNG_COMPRESSION, 9});
+		addVectors(data, intToBytes(imageData.size()));
+		addVectors(data, imageData);
+		for(int i = 0; i < markers.size(); i++){
+			addVectors(data, markers.at(i).getSaveData());
+		}
+		return data;
+
+	}
+
+	static Level fromBuffer(std::vector<unsigned char>* data, int offset){
+		Level level = Level();
+
+		level.parentId = intFromBytes(data, offset);
+		int markerCount = intFromBytes(data, offset + 4);
+		int imageSize = intFromBytes(data, offset + 8);
+
+		std::vector<unsigned char> imageBuffer(data->begin() + offset + 12, data->begin() + offset + 12 + imageSize);
+
+		level.backgroundImage = cv::imdecode(imageBuffer, cv::IMREAD_UNCHANGED);
+
+		int cursor = offset + 12 + imageSize;
+		for(int i = 0; i < markerCount; i++){
+			level.markers.push_back(Marker::fromBuffer(data, cursor));
+			int markerLabelSize = intFromBytes(data, cursor+22);
+			cursor += 26 + markerLabelSize;
+		}
+
+		return level;
+	}
+
 };
 
 
@@ -546,6 +671,8 @@ struct Scene{
 	bool isShiftDown = false;
 	bool isTyping = false;
 	bool isUnhandledEscape = false;
+	bool isCTRLDown = false;
+	bool isSDown = false;
 
 	Marker* selectedMarker;
 	int rightClickedMarkerIndex = -1;
@@ -573,13 +700,30 @@ struct Scene{
 	LeftCLickMenu lClickMenu;
 
 	std::vector<cv::Mat> icons = {};
-	std::vector<cv::Mat*> marker_icons = {};
+	std::unordered_map<int, cv::Mat*> marker_icons_map;
+	std::vector<std::tuple<cv::Mat*, int>> marker_icons = {};
 	std::string typedText = "";
 	std::vector<Level> levels = {};
+
+	cv::Mat fallBackIcon = cv::Mat(50, 50, CV_8UC4 ,cv::Scalar(255, 255, 255, 255));
 	
+	Scene(): w(), camera() {};
 	Scene(Window w, Camera camera){
 		this->w = w;
 		this->camera = camera;
+
+		this->originalCameraWidth = camera.width;
+		this->originalCameraHeight = camera.height;
+
+		this->baseZoomCameraWidth = camera.width;
+		this->baseZoomCameraHeight = camera.height;
+
+		levels = {};
+	}
+
+	void setCamera(Camera camera){
+		this->camera = camera;
+
 		this->originalCameraWidth = camera.width;
 		this->originalCameraHeight = camera.height;
 
@@ -602,8 +746,10 @@ struct Scene{
 		isLeftClickMenuActive = false;
 		isShiftDown = false;
 		isUnhandledEscape = false;
+		isCTRLDown = false;
 		toScroll = 0;
 		zoomFactor = 1.0f;
+		isSDown = false;
 		stopTyping();
 	}
 
@@ -621,11 +767,11 @@ struct Scene{
 
 	void renderIconScrollComponents(SDL_Renderer* renderer){
 		Color color = Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex);
-		uppermostIconScroll.render(renderer, iconTexture, marker_icons.at(uppermostIconScroll.scrollIndex), color);
-		upperIconScroll.render(renderer, iconTexture, marker_icons.at(upperIconScroll.scrollIndex), color);
-		primaryIconScroll.render(renderer, iconTexture, marker_icons.at(primaryIconScroll.scrollIndex), color);
-		lowerIconScroll.render(renderer, iconTexture, marker_icons.at(lowerIconScroll.scrollIndex), color);
-		lowestIconScroll.render(renderer, iconTexture, marker_icons.at(lowestIconScroll.scrollIndex), color);
+		uppermostIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(uppermostIconScroll.scrollIndex)), color);
+		upperIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(upperIconScroll.scrollIndex)), color);
+		primaryIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(primaryIconScroll.scrollIndex)), color);
+		lowerIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(lowerIconScroll.scrollIndex)), color);
+		lowestIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(lowestIconScroll.scrollIndex)), color);
 
 	}
 
@@ -655,11 +801,13 @@ struct Scene{
 
 	static Scene createSceneFromImage(cv::Mat image){
 		int minRes = std::min(image.cols, image.rows);
+		LOG("Here 984156");
 		Scene scene = Scene(
 			Window(500, 500, "Default Scene"),
 			Camera(CoordInt(0, 0), minRes, minRes, 500, 500)
 		);
 		scene.addLevel(Level(image, -1));
+		LOG("Here 789987");
 		return scene;
 	}
 
@@ -687,8 +835,8 @@ struct Scene{
 		}
 	}
 
-	int init(){
-		loadIcons();
+	int init(std::string path){
+		loadIcons(path);
 		int res = w.init();
 		texture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STATIC, camera.renderWidth, camera.renderHeight);
 		iconTexture = SDL_CreateTexture(w.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, ICON_RES, ICON_RES);
@@ -725,19 +873,96 @@ struct Scene{
 		return res;
 	}
 
+	std::vector<unsigned char> getSaveData(){
+		std::vector<unsigned char> data = {};
+		addVectors(data, intToBytes(FILE_FORMAT_VERSION));
+		addVectors(data, intToBytes(levels.size()));
+		for(int i = 0; i < levels.size(); i++){
+			addVectors(data, levels.at(i).getSaveData());
+		}
+		return data;
+	}
+
+	int saveData(){
+		std::string filePath = getSaveFileFromUser(std::vector<std::string>{FILE_EXTENSION});
+		if(filePath.empty()){return -1;}
+		std::ofstream file(filePath, std::ios::binary);
+		if(!file){return -1;}
+		std::vector<unsigned char> data = getSaveData();
+		file.write(reinterpret_cast<const char*> (data.data()), data.size());
+		file.close();
+		return 1;
+	}
+
+	static std::vector<unsigned char> readFileBuffer(std::string filePath){
+		std::vector<unsigned char> data = {};
+		std::ifstream file(filePath, std::ios::binary);
+
+		if(!file.is_open()){return data;}
+
+		file.seekg(0, std::ios::end);
+		int fileSize = file.tellg();
+		file.seekg(std::ios::beg);
+
+		char* buffer = new char[fileSize];
+		file.read(buffer, fileSize);
+		file.close();
+
+		for(int i = 0; i < fileSize; i++){
+			data.push_back(buffer[i]);
+		}
+
+		delete[] buffer;
+		return data;
+	}
+
+	static Scene sceneFromFile(std::string path){
+		std::vector<unsigned char> data = readFileBuffer(path);
+		int levelCount = intFromBytes(&data, 4);
+
+		std::vector<Level> levels = {};
+
+		int cursor = 8;
+		for(int i = 0; i < levelCount; i++){
+			levels.push_back(Level::fromBuffer(&data, cursor));
+			int imageSize = intFromBytes(&data, cursor + 8);
+
+			int markerCount = intFromBytes(&data, cursor + 4);
+			int markerCursor = cursor +	12 + imageSize;
+			int sizeofMarkers = 0;
+			for(int j = 0; j < markerCount; j++){
+				int sizeofMarker = 26 + intFromBytes(&data, markerCursor + 22);
+				sizeofMarkers += sizeofMarker;
+				markerCursor += sizeofMarker;
+			}
+
+			cursor += 12 + imageSize + sizeofMarkers;
+		}
+		
+		std::filesystem::path filePath(path);
+		int cameraSize = std::min(levels.at(0).backgroundImage.cols, levels.at(0).backgroundImage.rows);
+		Scene scene = Scene(Window(500, 500, filePath.filename().string()), Camera(CoordInt(0, 0), cameraSize, cameraSize, 500, 500));
+		scene.levels = levels;
+		return scene;
+	}
+
 	static cv::Mat getImageFromUser(){
 		cv::Mat image;
 		std::string path = "";
 
 	read_again:
 		path = getFileFromUser(std::vector<std::string> {"bmp", "dib", "jpeg", "jpg", "jpe", "jp2", "png", "webp", "pbm", "pgm", "ppm", "pxm", "pnm", "sr", "ras", "tiff", "tif", "exr", "hdr", "pic"});
+		std::cout << path << std::endl;
 		if(path.length() == 0){goto read_again;}
 		if(!std::filesystem::exists(path)){goto read_again;}
+
+		std::cout << "here 1323: " << path << std::endl;
 		image = cv::imread(path, cv::IMREAD_COLOR);
+
 		if(image.empty()){goto read_again;}
 
 		std::cout << path << std::endl;
-
+		LOG(image.empty())
 		return image;
 	}
 
@@ -755,18 +980,47 @@ struct Scene{
 		return "";
 	}
 
-	void loadIcons(){
-		icons.push_back(cv::imread(getExecutableDirectory() + "\\Assets\\icon1.png", cv::IMREAD_UNCHANGED));
-		icons.push_back(cv::imread(getExecutableDirectory() + "\\Assets\\marker_toggle.png", cv::IMREAD_UNCHANGED));
-		icons.push_back(cv::imread(getExecutableDirectory() + "\\Assets\\icon2.png", cv::IMREAD_UNCHANGED));
-		icons.push_back(cv::Mat(50, 50, CV_8UC4 ,cv::Scalar(255, 255, 255, 255)));
+	void loadIcons(std::string path){
+		std::vector<std::filesystem::path> paths = {};
 
-		std::cout << getExecutableDirectory() + "\\Assets\\icon1.png" <<std::endl;
-		std::cout << std::filesystem::exists(getExecutableDirectory() + "\\Assets\\icon1.png") << std::endl;
+		LOG(path + "Assets\\icons");
 
-		marker_icons.push_back( &(icons.at(0)) );
-		marker_icons.push_back( &(icons.at(2)) );
+		for(const auto& entry : std::filesystem::directory_iterator(path + "Assets\\icons")){
+			if(std::filesystem::is_regular_file(entry)){
+				paths.push_back(entry.path());
+			}
+		}
 
+		std::vector<std::string> valid_extensions = VALID_IMAGE_EXTENSIONS;
+
+		for(int i = 0; i < paths.size(); i++){
+			std::string extension = paths.at(i).extension().string();
+			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c){return std::tolower(c);});
+			extension.erase(0, 1);
+			bool isExtensionValid = false;
+			for(int j = 0; j < valid_extensions.size(); j++){
+				if(extension == valid_extensions.at(j)){
+					isExtensionValid = true;
+					break;
+				}
+			}
+			if(!isExtensionValid){break;}
+			std::string filename = paths.at(i).filename().string();
+			std::string idDigits = "";
+			for(int j = 0; j < filename.size(); j++){
+				std::cout << filename.at(j) << " is number: " << std::isdigit(filename.at(j)) << std::endl;
+				if(std::isdigit(filename.at(j))){
+					idDigits += filename.at(j);
+				}
+			}
+			if(!idDigits.empty()){
+				int iconId = std::stoi(idDigits);
+				icons.push_back(cv::imread(paths.at(i).string(), cv::IMREAD_UNCHANGED));
+				marker_icons_map.insert({iconId, &(icons.at(icons.size()-1)) });
+				marker_icons.push_back(std::make_tuple( &(icons.at(icons.size()-1) ), iconId));
+			}
+
+		}
 	}
 
 	void addMarker(Marker marker){
@@ -870,9 +1124,13 @@ struct Scene{
 			if(event.key.keysym.sym == SDLK_ESCAPE){
 				isUnhandledEscape = true && !isTyping;
 			}
+			if(event.key.keysym.sym == SDLK_LCTRL || event.key.keysym.sym == SDLK_RCTRL){isCTRLDown = true;}
+			if(event.key.keysym.sym == SDLK_s){isSDown = true;}
 		}
 		if(event.type == SDL_KEYUP){
 			if(event.key.keysym.sym == SDLK_LSHIFT){isShiftDown = false;}
+			if(event.key.keysym.sym == SDLK_LCTRL || event.key.keysym.sym == SDLK_RCTRL){isCTRLDown = false;}
+			if(event.key.keysym.sym == SDLK_s){isSDown = false;}
 		}
 		
 
@@ -895,10 +1153,10 @@ struct Scene{
 		for(int i = 0; i < levels.at(currentLevel).markers.size(); i++){
 			if(levels.at(currentLevel).markers.at(i).isVisible(&camera)){
 				cv::Mat* pt;
-				if(levels.at(currentLevel).markers.at(i).iconIndex >= marker_icons.size()){
-					pt = marker_icons.at(0);
+				if(marker_icons_map.find(levels.at(currentLevel).markers.at(i).iconId) == marker_icons_map.end()){
+					pt = &fallBackIcon;
 				}else{
-					pt = marker_icons.at(levels.at(currentLevel).markers.at(i).iconIndex);
+					pt = marker_icons_map.at(levels.at(currentLevel).markers.at(i).iconId);
 				}
 				levels.at(currentLevel).markers.at(i).render(renderer, iconTexture, &camera, pt, textTexture, isTyping && i == rightClickedMarkerIndex);
 			}
@@ -941,6 +1199,9 @@ struct Scene{
 			camera.position.x -= camera.position.x+camera.width-levels.at(currentLevel).backgroundImage.cols;
 		}
 		if(camera.position.y+camera.height > levels.at(currentLevel).backgroundImage.rows){
+			LOG(currentLevel);
+			LOG(levels.size());
+			LOG(levels.at(currentLevel).backgroundImage.rows);
 			camera.position.y -= camera.position.y+camera.height-levels.at(currentLevel).backgroundImage.rows;
 		}
 	}
@@ -949,9 +1210,9 @@ struct Scene{
 		renderBackground(w.renderer);
 		renderMarkers(w.renderer);
 		renderIconScrollComponents(w.renderer);
-		ColorRedScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(ColorRedScroll.scrollIndex, 0, 0));
-		ColorGreenScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(0, ColorGreenScroll.scrollIndex, 0));
-		ColorBlueScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(0, 0, ColorBlueScroll.scrollIndex));
+		ColorRedScroll.render(w.renderer, iconTexture, &fallBackIcon, Color(ColorRedScroll.scrollIndex, 0, 0));
+		ColorGreenScroll.render(w.renderer, iconTexture, &fallBackIcon, Color(0, ColorGreenScroll.scrollIndex, 0));
+		ColorBlueScroll.render(w.renderer, iconTexture, &fallBackIcon, Color(0, 0, ColorBlueScroll.scrollIndex));
 
 		colorDisplayScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex));
 
@@ -1041,6 +1302,7 @@ struct Scene{
 			}
 			isLeftClickMenuActive = false;
 			isUnhandledLeftMouseClick = false;
+			isMouseLeftDown = false;
 		}
 		
 		if(isUnhandledCharacterType){
@@ -1049,7 +1311,7 @@ struct Scene{
 		}
 
 		
-		if(toScroll != 0 && isInsideIconScrolls(mousePosition)){
+		if(toScroll != 0 && isInsideIconScrolls(mousePosition)){ //here
 			primaryIconScroll.scroll(toScroll);
 			updateIconScrollComponents();
 			toScroll = 0;
@@ -1089,7 +1351,8 @@ struct Scene{
 			if(lowerIconScroll.isInside(mousePosition)){pt = &lowerIconScroll;}
 			if(lowestIconScroll.isInside(mousePosition)){pt = &lowestIconScroll;}
 			if(pt != NULL){
-				addMarker(Marker(mousePosition, Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex), Color(0, 0, 0), "new Marker", (*pt).scrollIndex, 25));
+				LOG("HERE 565")
+				addMarker(Marker(mousePosition, Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex), Color(0, 0, 0), "new Marker", std::get<1>(marker_icons.at((*pt).scrollIndex)), 25));
 				selectedMarker = &(levels.at(currentLevel).markers.at(levels.at(currentLevel).markers.size() - 1));
 				isMarkerSelected = true;
 			}
@@ -1106,6 +1369,13 @@ struct Scene{
 			camera.position.y = mouseLeftDownCameraPosition.y - (camera.scaleFromCameraCoordinates(mousePosition).y-camera.scaleFromCameraCoordinates(mouseLeftDownPosition).y);
 			isUnhandledLeftMouseClick = false;
 		}
+
+		if(isSDown && isCTRLDown){
+			saveData();
+			isCTRLDown = false;
+			isSDown = false;
+		}
+		
 		clipCamera();
 		}
 };

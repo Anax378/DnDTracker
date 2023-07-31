@@ -700,8 +700,8 @@ struct Scene{
 	LeftCLickMenu lClickMenu;
 
 	std::vector<cv::Mat> icons = {};
-	std::unordered_map<int, cv::Mat*> marker_icons_map;
-	std::vector<std::tuple<cv::Mat*, int>> marker_icons = {};
+	std::unordered_map<int, int> marker_icons_map;
+	std::vector<std::tuple<int, int>> marker_icons = {};
 	std::string typedText = "";
 	std::vector<Level> levels = {};
 
@@ -767,11 +767,11 @@ struct Scene{
 
 	void renderIconScrollComponents(SDL_Renderer* renderer){
 		Color color = Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex);
-		uppermostIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(uppermostIconScroll.scrollIndex)), color);
-		upperIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(upperIconScroll.scrollIndex)), color);
-		primaryIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(primaryIconScroll.scrollIndex)), color);
-		lowerIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(lowerIconScroll.scrollIndex)), color);
-		lowestIconScroll.render(renderer, iconTexture, std::get<0>(marker_icons.at(lowestIconScroll.scrollIndex)), color);
+		uppermostIconScroll.render(renderer, iconTexture, &icons.at(std::get<0>(marker_icons.at(uppermostIconScroll.scrollIndex))), color);
+		upperIconScroll.render(renderer, iconTexture, &icons.at(std::get<0>(marker_icons.at(upperIconScroll.scrollIndex))), color);
+		primaryIconScroll.render(renderer, iconTexture, &icons.at(std::get<0>(marker_icons.at(primaryIconScroll.scrollIndex))), color);
+		lowerIconScroll.render(renderer, iconTexture, &icons.at(std::get<0>(marker_icons.at(lowerIconScroll.scrollIndex))), color);
+		lowestIconScroll.render(renderer, iconTexture, &icons.at(std::get<0>(marker_icons.at(lowestIconScroll.scrollIndex))), color);
 
 	}
 
@@ -1008,16 +1008,19 @@ struct Scene{
 			std::string filename = paths.at(i).filename().string();
 			std::string idDigits = "";
 			for(int j = 0; j < filename.size(); j++){
-				std::cout << filename.at(j) << " is number: " << std::isdigit(filename.at(j)) << std::endl;
 				if(std::isdigit(filename.at(j))){
 					idDigits += filename.at(j);
 				}
 			}
 			if(!idDigits.empty()){
 				int iconId = std::stoi(idDigits);
-				icons.push_back(cv::imread(paths.at(i).string(), cv::IMREAD_UNCHANGED));
-				marker_icons_map.insert({iconId, &(icons.at(icons.size()-1)) });
-				marker_icons.push_back(std::make_tuple( &(icons.at(icons.size()-1) ), iconId));
+				cv::Mat mat = cv::imread(paths.at(i).string(), cv::IMREAD_UNCHANGED);
+				if(mat.cols == ICON_RES && mat.rows == ICON_RES){
+					icons.push_back(mat);
+					marker_icons_map.insert({iconId, icons.size()-1 });
+					marker_icons.push_back(std::make_tuple(icons.size()-1, iconId));
+				}
+				
 			}
 
 		}
@@ -1156,7 +1159,7 @@ struct Scene{
 				if(marker_icons_map.find(levels.at(currentLevel).markers.at(i).iconId) == marker_icons_map.end()){
 					pt = &fallBackIcon;
 				}else{
-					pt = marker_icons_map.at(levels.at(currentLevel).markers.at(i).iconId);
+					pt = &icons.at(marker_icons_map.at(levels.at(currentLevel).markers.at(i).iconId));
 				}
 				levels.at(currentLevel).markers.at(i).render(renderer, iconTexture, &camera, pt, textTexture, isTyping && i == rightClickedMarkerIndex);
 			}
@@ -1214,7 +1217,7 @@ struct Scene{
 		ColorGreenScroll.render(w.renderer, iconTexture, &fallBackIcon, Color(0, ColorGreenScroll.scrollIndex, 0));
 		ColorBlueScroll.render(w.renderer, iconTexture, &fallBackIcon, Color(0, 0, ColorBlueScroll.scrollIndex));
 
-		colorDisplayScroll.render(w.renderer, iconTexture, &(icons.at(3)), Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex));
+		colorDisplayScroll.render(w.renderer, iconTexture, &fallBackIcon, Color(ColorRedScroll.scrollIndex, ColorGreenScroll.scrollIndex, ColorBlueScroll.scrollIndex));
 
 		if(isLeftClickMenuActive){
 			lClickMenu.render(w.renderer, menuTexture);

@@ -2,6 +2,8 @@
 #include "scene.h"
 #include <chrono>
 
+#pragma comment(linker, "/SUBSYSTEM:windows /ENTRY:mainCRTStartup")
+
 int main(int argc, char* argv[]){
 
 	if(SDL_Init(SDL_INIT_VIDEO) < 0){
@@ -48,6 +50,7 @@ int main(int argc, char* argv[]){
 			scene.handleEvent(event);
 		}
 		scene.updateGUI();
+
 		scene.render();
 		if(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()-ms.count() > 1000){
 			ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
